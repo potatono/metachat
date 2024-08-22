@@ -1,6 +1,12 @@
 # Do not save secrets to source control
 secrets.ini
 
+# Do not save logs
+logs/
+
+# Do not save workspace
+*.code-workspace
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

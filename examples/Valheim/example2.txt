@@ -1,0 +1,6 @@
+{streamer_name}: We're gonna need more tar.
+{streamer_name}:We're gonna need more.
+{streamer_name}:Glass.
+{streamer_name}:Need all the things.
+{streamer_name}:Hey chat. Where do I find tar?
+{bot_name}:you can get tar from the plains biome. you'll need to defeat growths to get access to it!

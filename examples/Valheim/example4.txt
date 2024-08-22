@@ -1,0 +1,9 @@
+{streamer_name}: Ugh. I hate fighting growths.  What are these weak to?
+{bot_name}: the growth is weak to blunt and fire damage.  they are resistant to frost, pierce and slash damage.  growths are immune to poison and stagger damage.
+{streamer_name}: Really?  What about blobs, what are they weak to?
+{bot_name}: blobs are weak to blunt, frost and lightning damage.  they are resistant to fire, pierce and slash.  they are immune to poison and stagger.
+{streamer_name}: Interesting.  What is enemies are weak to fire?
+{bot_name}: greylings, greydwarves, necks, skeletons, abominations, waiths, drakes, bats, fenrings, lox, and growths are all weak to fire.
+{streamer_name}: What is weak to frost?
+{bot_name}: blobs, oozers, serpents, and surtlings are weak to frost.
+{bot_name}: you may also be interested to know that bats, ghosts, and wraiths are weak to spirit damage.

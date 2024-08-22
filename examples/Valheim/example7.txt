@@ -1,0 +1,6 @@
+{streamer_name}: How many of these things do I need to summon the boss?
+{bot_name}: to summon eikthyr you need 2 deer trophies.
+{bot_name}: for the elder you need 3 ancient seeds.
+{bot_name}: bonemass uses 10 withered bones.
+{bot_name}: summoning moder requires 3 dragon eggs.
+{bot_name}: yagluth will take 5 fuling totems to summon.

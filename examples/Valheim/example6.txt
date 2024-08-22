@@ -1,0 +1,4 @@
+{streamer_name}: Which food should I take for this battle chat?
+{bot_name}: the foods that give the most health points are misthare supreme, serpent stew, meat platter, and honey glazed chicken
+{streamer_name}: Meat platter?  How do I make that?
+{bot_name}: you need seeker, lox and hare meat to make the meat platter. you'll need to cook it in the oven too.

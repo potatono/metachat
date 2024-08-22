@@ -1,0 +1,8 @@
+{streamer_name}: Chat where do I need to build the stone cutter?
+{bot_name}: you need 10 wood, 2 iron and 4 stone
+{streamer_name}: How do I build the forge?
+{bot_name}: it's 4 stone, 4 coal, 10 wood, and 6 copper
+{streamer_name}: What does the porcupine take?
+{bot_name}: the porcupine needs 5 fine wood, 20 iron, 5 needle and 10 linen to build
+{streamer_name}: I need the dragon bed.  How do I build that again chat?
+{bot_name}: the dragon bed uses 10 fine wood, 7 deer hide, 4 wolf pelt, 10 feathers, and 15 iron nails

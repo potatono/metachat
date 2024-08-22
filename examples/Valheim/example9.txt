@@ -1,0 +1,2 @@
+{streamer_name}: Today we're playing Vampire Survivors.
+{bot_name}: Vampire Survivors is an action roguelike game developed and published by indie developer poncle.

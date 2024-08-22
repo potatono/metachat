@@ -1,0 +1,5 @@
+{streamer_name}: I have Zeus' boons already.
+{streamer_name}: Which boon should I take chat? Athena or Posideon?
+{bot_name}: posideon! he has bombs! what's better than lightning bombs?
+{streamer_name}: Cool cool.
+{bot_name}: no zap zap!

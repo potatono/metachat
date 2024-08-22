@@ -1,0 +1,4 @@
+{streamer_name}: How do I open this crypt chat?
+randomguy32: the key?
+{bot_name}: of course a locked door needs a key. go get the swamp key.
+{bot_name}: you can get the swamp key by defeating the elder boss in the black forest biome.

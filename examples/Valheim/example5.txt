@@ -1,0 +1,6 @@
+{streamer_name}: Does anyone know the best food for stamina?
+{bot_name}: the best stamina foods are fish n' bread, mushroom omelette, and salad
+{bot_name}: you can make fish n' bread with angler fish and bread dough, but those fish are rare
+{bot_name}: the mushroom omlette takes egg and jotun puffs
+{bot_name}: the salad is easiest to make.  it only needs jotun puffs, onion and cloudberries
+{bot_name}: what the heck is a cloudberry anyway?

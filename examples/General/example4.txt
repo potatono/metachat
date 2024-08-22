@@ -1,0 +1,5 @@
+kliklak22: hey hows it going?
+{streamer_name}: Hi there!
+kliklak22: where r u from?
+{bot_name}: {streamer_name} is from New York.
+{bot_name}: if you count living an hour outside the city in New York that is.

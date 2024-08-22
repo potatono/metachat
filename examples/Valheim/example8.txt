@@ -1,0 +1,5 @@
+{streamer_name}: I need to find the trader.
+{streamer_name}: I don't know where to even start.
+{streamer_name}: How do I find the trader chat?
+{bot_name}: if you want to find Haldor the trader, look in the black forest biomes that are at least 1500 meters from the spawn point.
+{bot_name}: his icon will appear on the map when you're about 500 meters away from him.

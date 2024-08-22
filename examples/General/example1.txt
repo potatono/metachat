@@ -1,0 +1,5 @@
+{streamer_name}: Let's go to Star Road.
+{streamer_name}: Where is the key?
+{bot_name}: look on top of the pipe. you need the feather.
+{streamer_name}: Thanks bot!
+{bot_name}: not like i had better things to do
