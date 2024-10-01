@@ -23,6 +23,10 @@ class ChatbotApp():
         self.streamer_name = CONFIG.get("streamer", "name")
         self.history_size = CONFIG.getint("chatbot", "history_size", fallback=30)
         self.nicknames = CONFIG.get("chatbot", "nicknames")
+        self.reply_mode = CONFIG.get("chatbot", "reply_mode", fallback="conversation")
+
+        self.last_message_time = 0
+        self.last_interaction_time = 0
 
         self.chatgpt = CompletionApp()
 
@@ -61,9 +65,19 @@ class ChatbotApp():
     def on_message(self, message):
         self.log.info(f"Got message {message['author']}: {message['text']}")
 
+        if message['text'] is None:
+            self.log.warning(f"Got unexpected empty message.  Returning early.")
+            return
+        
         if self.is_command(message):
             self.process_command(message)
             return
+
+        if self.is_from_me(message):
+            self.last_message_time = time.time()
+        
+        if not self.is_from_streamer(message):
+            self.last_interaction_time = time.time()
 
         self.history.append(message)
 
@@ -73,10 +87,16 @@ class ChatbotApp():
         if self.should_reply(message):
             self.reply()
     
+    def is_from_streamer(self, message):
+        return message['author'] == self.streamer_name
+    
+    def is_from_me(self, message):
+        return message['author'] == self.name
+
     def is_command(self, message):
         pattern = f"\\bHey (?:{self.nicknames}),? please (.+)\\b"
 
-        if message['author'] != CONFIG.get("streamer", "name", fallback=None):
+        if not self.is_from_streamer(message):
             self.log.error(f"Ignoring command from {message['author']}")
             return False
 
@@ -130,6 +150,9 @@ class ChatbotApp():
             self.say(f"[cmd] I can't set the game to empty.")
 
     def is_talking_to_me(self, message):
+        if self.is_from_me(message):
+            return False
+        
         pattern = f"\\b({self.nicknames})\\b"
 
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
@@ -139,16 +162,25 @@ class ChatbotApp():
         return result
 
     def time_since_last_message(self):
-        t = time.time()
+        return time.time() - self.last_message_time
 
-        for line in reversed(self.history):
-            if line['author'] == self.name:
-                self.log.debug(f"time_since_last_message={t - line['sent']}")
-                return t - line['sent']
+        # t = time.time()
+
+        # for line in reversed(self.history):
+        #     if line['author'] == self.name:
+        #         self.log.debug(f"time_since_last_message={t - line['sent']}")
+        #         return t - line['sent']
         
-        self.log.debug(f"time_since_last_message={t}")
-        return t
-    
+        # self.log.debug(f"time_since_last_message={t}")
+        # return t
+
+    # Returns time since last message from someone other than the streamer    
+    def time_since_last_interaction(self):
+        if self.last_interaction_time == 0:
+            return 0
+        else:
+            return time.time() - self.last_interaction_time
+
     def just_spoke(self, message):
         result = message['author'] == self.name
 
@@ -189,15 +221,70 @@ class ChatbotApp():
         self.log.debug(f"is_in_conversation={result}")
         return result
 
+    def is_activated(self, message):
+        if self.is_from_me(message):
+            return False
+        
+        pattern = f"\\b(hey|yes|yeah|no|nah|okay|thanks)?,?\\s*({self.nicknames})\\b"
+        
+        result = re.search(pattern, message['text'], re.IGNORECASE) is not None
+    
+        self.log.debug(f"is_activated={result}")
+
+        return result
+
+    def contains_link(self, message):
+        pattern = "\\w+\\.\\w+\/\\w+"
+
+        result = re.search(pattern, message['text']) is not None
+
+        return result
+    
+    def is_likely_spam(self, message):
+        if self.is_from_me(message) or self.is_from_streamer(message):
+            return False
+
+        matches = 0
+        if self.contains_link(message):
+            self.log.debug(f"Message contains link, spam matches={matches}")
+            matches += 1
+
+        pattern = '\\b(cheap|best|viewers|google)\\b'
+        if re.search(pattern, message['text'], re.IGNORECASE) is not None:
+            self.log.debug(f"Message contains spam language, spam matches={matches}")
+            matches += 1
+
+        if not message['text'].isascii():
+            self.log.debug(f"Message contains unicode, spam matches={matches}")
+            matches += 1
+
+        return matches > 1
+
     def should_reply(self, message):
-        result = (
-            self.is_talking_to_me(message) or
-            self.time_since_last_message() > 300 or
-            self.is_in_conversation(message)
-        ) and (
-            not self.just_spoke(message) or
-            self.is_randomly(0.1)
-        )
+        if self.reply_mode == "activation":
+            result = (
+                self.is_likely_spam(message) or 
+                self.is_activated(message) or 
+                (
+                    self.is_talking_to_me(message) and
+                    self.time_since_last_message() < 60 and
+                    not self.just_spoke(message)
+                ) or
+                self.time_since_last_interaction() > 300
+            )
+        else:
+            result = (
+                self.is_talking_to_me(message) or
+                self.time_since_last_message() > 300 or
+                self.is_in_conversation(message)
+            ) and (
+                not self.just_spoke(message) or
+                self.is_randomly(0.1)
+            ) and (
+                # TODO Hack to make conversation mode less chatty, needs work
+                # to be more conversational..  Revisit if using conversation mode.
+                self.time_since_last_message() > 30
+            )
 
         self.log.debug(f"should_reply={result}")
         return result

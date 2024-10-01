@@ -55,6 +55,7 @@ class ChatApp():
         if self.chat_log_file:
             t = time() - self.start_time
             print(f"[{t:10.2}] {message['author']}: {message['text']}", file=self.chat_log_file)
+            self.chat_log_file.flush()
 
     def on_message(self, message):
         self.on_message_cb(message)

@@ -10,9 +10,12 @@ from logs import *
 class StreamerApp():
     token = None
 
-    def __init__(self, on_say):
+    def __init__(self, on_say, on_voice):
         self.log = Logger("streamer")
-        self.rev = TranscriptApp(on_text=lambda t : self.on_text(t))
+        self.rev = TranscriptApp(
+            on_text=lambda t : self.on_text(t),
+            on_voice=on_voice
+        )
         self.name = CONFIG.get("streamer", "name")
 
         if CONFIG.getboolean("streamer", "send_to_twitch", fallback=True):
@@ -38,9 +41,12 @@ class StreamerApp():
                     self.twitch.start(self.token)        
 
     def shutdown(self):
+        self.rev.shutdown()
+        
         if self.twitch:
             self.twitch.shutdown()
             self.oauth.shutdown()
+
 
     def on_text(self, text):
         # If we're sending to twitch, we don't need to call on_say since the
@@ -54,3 +60,5 @@ class StreamerApp():
                 "sent": time.time()
             }
             self.on_say(msg)
+    
+    

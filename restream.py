@@ -39,7 +39,10 @@ class RestreamApp():
 
     def loop(self):
         self.log.info("Starting WS run_forever")
-        self.wsa.run_forever()
+        try:
+            self.wsa.run_forever()
+        except Exception as ex:
+            self.log.error("Exception in restream", exc_info=ex)
 
     def start(self, token):
         self.log.info("Starting WS thread")

@@ -111,7 +111,7 @@ class CompletionApp():
         response = openai.ChatCompletion.create(
             model=self.model,
             messages=messages,
-            temperature=0.5,
+            temperature=0.8,
             max_tokens=120,
             frequency_penalty=0.5,
             presence_penalty=0.0,

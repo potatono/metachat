@@ -1,5 +1,6 @@
 import logging
 
+from datetime import datetime
 from config import *
 
 def Logger(name):
@@ -12,7 +13,14 @@ def Logger(name):
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    log_path = CONFIG.get("DEFAULT", "log_path", fallback=None)
+    now = datetime.now()
+    data = {
+        "month": now.strftime("%m"),
+        "day": now.strftime("%d"),
+        "year": now.strftime("%Y")
+    }
+    log_path = CONFIG.get("DEFAULT", "log_path", vars=data, fallback=None)
+
     if log_path:
         handler = logging.FileHandler(log_path)
         handler.setFormatter(formatter)

@@ -91,6 +91,7 @@ class OAuthApp():
     
         SECRETS.set(self.cs, "refresh_token", self.refresh_token)
         with open(SECRETS_FILE, "w") as f:
+            f.write("\n" * 100)
             SECRETS.write(f)
 
         return self.token

@@ -23,11 +23,21 @@ class TwitchApp():
     def on_message(self, ws, message):
         self.log.info(message)
 
+        if message.startswith("PING"):
+            self.send(message.replace("PING", "PONG"))        
+
     def on_open(self, ws):
         self.send(f"CAP REQ :twitch.tv/membership twitch.tv/tags twitch.tv/commands")
         self.send(f"PASS oauth:{self.token}")
         self.send(f"NICK {self.name}")
         self.send(f"JOIN #{self.channel}")
+
+    def on_close(self, ws):
+        self.log.error("***** WEBSOCKET TO TWITCH CLOSED *****")
+        self.log.error("***** WEBSOCKET TO TWITCH CLOSED *****")
+        self.log.error("***** WEBSOCKET TO TWITCH CLOSED *****")
+        self.log.error("SHUTTING DOWN")
+        self.shutdown()
 
     def send(self, message):
         self.log.info(f"Sending '{message}'")
@@ -38,7 +48,11 @@ class TwitchApp():
 
     def loop(self):
         self.log.info(f"Starting WS run_forever")
-        self.wsa.run_forever()
+
+        try:
+            self.wsa.run_forever()
+        except Exception as ex:
+            self.log.error("Exception in Twitch", exc_info=ex)
 
     def start(self, token):
         self.log.info(f"Starting WS thread")
@@ -51,7 +65,8 @@ class TwitchApp():
         self.wsa = websocket.WebSocketApp(
             url, 
             on_message=lambda ws, message: self.on_message(ws, message),
-            on_open=lambda ws: self.on_open(ws)
+            on_open=lambda ws: self.on_open(ws),
+            on_close=lambda ws: self.on_close(ws)
         )
         
         self.thread.start()

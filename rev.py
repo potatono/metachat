@@ -80,9 +80,10 @@ class MicrophoneStream(object):
             yield b''.join(data)
 
 class TranscriptApp():
-    def __init__(self, on_text):
+    def __init__(self, on_text, on_voice):
         self.log = Logger("rev")
         self.on_text_cb = on_text
+        self.on_voice_cb = on_voice
         self.mc = MediaConfig('audio/x-raw', 'interleaved', 44100, 'S16LE', 1)
         self.token = SECRETS.get("rev.ai", "token")
         self.streamclient = RevAiStreamingClient(self.token, self.mc)
@@ -108,11 +109,24 @@ class TranscriptApp():
                 response_gen = self.streamclient.start(stream.generator())
 
                 for response in response_gen:
+                    # shutdown still set running to false and this will exit
+                    # instead of relying on KeyboardInterrupt.
+                    if not self.running:
+                        return
+                    
                     self.handle_response(response)                
-            except KeyboardInterrupt:
-                self.streamclient.end()
-                pass
 
+            except KeyboardInterrupt:
+                self.log.info("Caught keyboard interrupt.")
+            except BrokenPipeError:
+                self.log.info("Caught expected BrokenPipe.")
+            except Exception as ex:
+                self.log.error("Exception caught in Rev", exc_info=ex)
+            finally:
+                self.log.info("Stopping stream.")
+                self.running = False
+                self.streamclient.end()
+                
         self.log.info("Microphone loop finished..")
 
     def init_corrections(self):
@@ -139,7 +153,7 @@ class TranscriptApp():
 
             text = self.apply_corrections(text)
             
-            #self.on_text_cb(text)
+            self.on_voice_cb(text)
             self.append_text(text)
 
     def append_text(self, text):
@@ -169,6 +183,7 @@ class TranscriptApp():
             
         self.log.info("Shutting down..")
         self.running = False
-        self.streamclient.end()
-        self.thread.join()
+        # We don't end client here because we do it in the try/catch in loop
+        #self.streamclient.end()
+        #self.thread.join()
 
