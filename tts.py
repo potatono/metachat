@@ -11,6 +11,7 @@ class TTSApp():
     thread = None
     running = False
     queue = []
+    last_completion = None
 
     def __init__(self):
         self.log = Logger(f"TTS")
@@ -41,6 +42,7 @@ class TTSApp():
                 self.tts.say(msg)
                 self.tts.runAndWait()
                 self.log.info("TTS complete")
+                self.last_completion = time.time()
             
             time.sleep(0.25)
 

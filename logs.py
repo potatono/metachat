@@ -22,7 +22,7 @@ def Logger(name):
     log_path = CONFIG.get("DEFAULT", "log_path", vars=data, fallback=None)
 
     if log_path:
-        handler = logging.FileHandler(log_path)
+        handler = logging.FileHandler(log_path, "a", "utf-8")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 

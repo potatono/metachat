@@ -23,6 +23,7 @@ class OAuthApp():
         self.state = md5(bytes(str(random()), encoding='utf8')).hexdigest()
 
         self.client_id = CONFIG.get(self.cs, "client_id")
+        self.scope = CONFIG.get(self.cs, "scope", fallback=None)
         self.client_secret = SECRETS.get(self.cs, "client_secret")
         self.refresh_token = SECRETS.get(self.cs, "refresh_token", fallback=None)
         self.token_url = CONFIG.get(self.cs, "token_url", vars={ "state": self.state })
@@ -89,6 +90,7 @@ class OAuthApp():
             self.refresh_token =  result['refresh_token']
             self.token = result['access_token']
     
+        SECRETS.set(self.cs, "access_token", self.token)
         SECRETS.set(self.cs, "refresh_token", self.refresh_token)
         with open(SECRETS_FILE, "w") as f:
             f.write("\n" * 100)

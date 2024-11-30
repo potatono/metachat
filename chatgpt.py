@@ -52,7 +52,7 @@ class CompletionApp():
 
         return examples
                 
-    def get_completion_prompt(self, history_string):
+    def get_completion_prompt(self, history_string, context):
         paths = [ CONFIG.get("openai.com", "prompt_template") ]
         paths.extend(self.get_examples())
 
@@ -71,13 +71,15 @@ class CompletionApp():
         prompt += "\nAdd to the conversation below:\n\n"
         prompt += history_string + f"\n{self.name}:"
 
+        prompt += f"\n{context}\n"
+
         self.log.debug("--- START PROMPT ---")
         self.log.debug(prompt)
         self.log.debug("--- END PROMPT ---")
 
         return prompt
 
-    def get_chat_messages(self, history):
+    def get_chat_messages(self, history, context):
         messages = []
         template_path = CONFIG.get("openai.com", "prompt_template")
         template = open(template_path, "r").read()
@@ -100,13 +102,17 @@ class CompletionApp():
 
         for message in history:
             role = (message['author'] == self.name and "assistant") or "user"
-            messages.append({ "role":role, "content":message['text'], "name":message['author'] })
+            author = re.sub("\\s", "_", message['author'],flags=re.A)
 
-        self.log.info(messages)
+            messages.append({ "role":role, "content":message['text'], "name":author })
+
+        messages.append({ "role":"system", "content":context })
+
+        #self.log.info(messages)
         return messages
     
-    def get_chat_response(self, history):
-        messages = self.get_chat_messages(history)
+    def get_chat_response(self, history, context):
+        messages = self.get_chat_messages(history, context)
 
         response = openai.ChatCompletion.create(
             model=self.model,
@@ -121,34 +127,38 @@ class CompletionApp():
         text = response['choices'][0]['message']['content'].strip()
         return text
     
-    def get_completion_response(self, history_string):
-        prompt = self.get_completion_prompt(history_string)
+    def get_completion_response(self, history_string, context):
+        prompt = self.get_completion_prompt(history_string, context)
 
         response = openai.Completion.create(
             model=self.model,
             prompt=prompt,
-            temperature=0.5,
+            temperature=1, #was 0.5, default is 1
             max_tokens=120,
             frequency_penalty=0.5,
             presence_penalty=0.0,
             stop=[ f"{self.name}:", f"{self.streamer}:" ]
         )
 
-        self.log.info(response)
+        #self.log.info(response)
         text = response['choices'][0]['text'].strip()
+
+        if len(text) == 0:
+            self.log.error("Got empty text response from OpenAI")
+            self.log.error(response)
 
         return text
 
     def history_string(self, history):
         return "\n".join([f"{i['author']}: {i['text']}" for i in history])
 
-    def get_response(self, history):
+    def get_response(self, history, context):
         if self.api == "completion":
             history_string = self.history_string(history)
-            return self.get_completion_response(history_string)
+            return self.get_completion_response(history_string, context)
         
         elif self.api == "chat":
-            return self.get_chat_response(history)
+            return self.get_chat_response(history, context)
         
         else:
             self.log.error(f"Invalid chatgpt api: {self.api}")

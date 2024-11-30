@@ -43,7 +43,7 @@ class Application():
                 self.chatbot.ensure_connected()
                 self.reactions.ensure_connected()
 
-                self.log.debug("tick")
+                #self.log.debug("tick")
                 sleep(3)
             except KeyboardInterrupt:
                 break
