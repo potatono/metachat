@@ -1,0 +1,9 @@
+requests
+azure.cognitiveservices.speech
+pygame
+openai
+obs-websocket-py
+websocket
+pyaudio
+rev_ai
+pyttsx3
