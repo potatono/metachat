@@ -45,8 +45,8 @@ class AvatarApp():
 
     def shutdown(self):
         if self.enable_obs_updates:
-            self.obs.disconnect()
-            self.obs = None
+            self.ws.disconnect()
+            self.ws = None
 
         self.running = False
         self.thread.join()
@@ -67,8 +67,8 @@ class AvatarApp():
 
     def init_obs(self):
         if self.enable_obs_updates:
-            self.obs = obsws("localhost", 4455, SECRETS.get("avatar", "websocket_secret"))
-            self.obs.connect()
+            self.ws = obsws("localhost", 4455, SECRETS.get("avatar", "websocket_secret"))
+            self.ws.connect()
 
     def close_pygame(self):
         pygame.display.quit()
