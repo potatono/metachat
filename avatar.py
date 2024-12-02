@@ -58,7 +58,7 @@ class AvatarApp():
 
     def init_images(self):
         for i in range(0,22):
-            self.images.append(pygame.image.load(f"viseme/viseme-id-{i}.jpg"))
+            self.images.append(pygame.image.load(f"avatar/bobby-id-{i}.png"))
     
     def init_pygame(self):
         self.screen = pygame.display.set_mode((self.width, self.height))
