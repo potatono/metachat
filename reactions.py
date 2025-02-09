@@ -6,8 +6,7 @@ import time
 
 from config import *
 from logs import *
-
-from obswebsocket import obsws, requests
+from obs import ObsApp
 
 class ReactionsApp():
     token = None
@@ -22,21 +21,18 @@ class ReactionsApp():
         self.source_name = CONFIG.get("reactions", "source_name")
 
         self.matches = json.loads(CONFIG.get("reactions", "matches"))
-        self.ws = None
+        self.obs = ObsApp()
 
         ## Used to disable the reaction scene item after some time has passed
         self.reset_reaction_on = None
     
     def ensure_connected(self):
-        if not self.ws:
-            self.ws = obsws("localhost", 4455, SECRETS.get("reactions", "websocket_secret"))
-            self.ws.connect()
+        self.obs.ensure_connected()
 
     def shutdown(self):
-        self.ws.disconnect()
-        self.ws = None
+        self.obs.shutdown()
 
-    def on_message(self, text):
+    def on_voice(self, text):
         text = re.sub("[^\\w\\s]", "", text)
 
         self.reset_reaction()
@@ -73,27 +69,14 @@ class ReactionsApp():
         shutil.copy(clip_path, self.source_path)
 
     def toggle_reaction(self, toggle_to=True):
-        scene = self.ws.call(requests.GetCurrentProgramScene())
-        uuid = scene.getSceneUuid()
-        self.log.debug(f"Current scene uuid is {uuid}")
-    
-        items = self.ws.call(requests.GetSceneItemList(sceneUuid=uuid))
-        for i in items.getSceneItems():
-            if i['sourceName'] == self.source_name:
-                itemId = i['sceneItemId']
-                self.toggle_scene_item(uuid, itemId, toggle_to)
+        uuid = self.obs.get_current_scene_uuid()
+        item_id = self.obs.get_scene_item_by_name(uuid, self.source_name)
+        self.toggle_scene_item(uuid, item_id, toggle_to)
         
-    def toggle_scene_item(self, uuid, itemId, toggle_to=True):
-        self.log.debug("Disable scene item")
-        self.ws.call(requests.SetSceneItemEnabled(sceneUuid=uuid, 
-                                                  sceneItemId=itemId, 
-                                                  sceneItemEnabled=False))
+    def toggle_scene_item(self, uuid, item_id, toggle_to=True):
+        self.obs.set_scene_item_enabled(uuid, item_id, False)
         
         if toggle_to:
-            time.sleep(0.25)
- 
-            self.log.debug("Enable scene item")
-            self.ws.call(requests.SetSceneItemEnabled(sceneUuid=uuid, 
-                                                      sceneItemId=itemId, 
-                                                      sceneItemEnabled=True))
+            time.sleep(0.25) 
+            self.obs.set_scene_item_enabled(uuid, item_id, True)
 

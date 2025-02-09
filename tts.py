@@ -27,6 +27,14 @@ class TTSApp():
         self.log.info(f"Appending {text}")
         self.queue.append(text)
 
+    def ack(self):
+        ## TODO Play a wav file
+        pass
+
+    def tick(self):
+        # Used in Avatar to run on the main loop.
+        pass
+
     def loop(self):
         self.tts = pyttsx3.init()
 

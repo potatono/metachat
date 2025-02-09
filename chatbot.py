@@ -13,10 +13,12 @@ from twitch import TwitchApp
 from oauth import OAuthApp
 from tts import TTSApp
 from avatar import AvatarApp
+from webserver import WebserverApp
+
+from macros import Macros
 
 from config import *
 from logs import *
-
 
 class ChatbotApp():
     token = None
@@ -39,6 +41,7 @@ class ChatbotApp():
 
         self.load_history()
         self.chatgpt = CompletionApp()
+        self.macros = Macros()
 
         if CONFIG.getboolean("chatbot", "send_to_twitch", fallback=True):
             self.oauth = OAuthApp(CONFIG.get("chatbot", "twitch_oauth_section"))
@@ -54,6 +57,8 @@ class ChatbotApp():
         else:
             self.tts = None
 
+        if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
+            self.webserver = WebserverApp(on_copilot_message=self.on_copilot_message)
 
     def ensure_connected(self):
         if self.twitch:
@@ -69,10 +74,16 @@ class ChatbotApp():
             self.log.info("Starting TTS Server..")
             self.tts.start()
 
+        if self.webserver:
+            self.webserver.ensure_connected()
+
     def shutdown(self):
         if self.twitch:
             self.twitch.shutdown()
             self.oauth.shutdown()
+
+        if self.webserver:
+            self.webserver.shutdown()
 
     def load_history(self):
         if self.history_path and os.path.exists(self.history_path):
@@ -93,6 +104,30 @@ class ChatbotApp():
             self.history.pop(0)
         
         self.save_history()
+
+    def on_voice(self, text):
+        self.log.debug(f"Got voice: {text}")
+        message = { "author": self.streamer_name, "text": text }
+
+        if self.is_activated(message):
+            if self.tts:
+                self.tts.ack()
+
+    def on_copilot_message(self, text):
+        self.log.debug(f"Got copilot message: {text}")
+
+        if self.tts:
+            self.tts.ack()
+            
+        message = { "author": self.streamer_name, "text": text }
+
+        self.append_to_history(message)
+        reply_context = {
+            "type": "code",
+            "prompt": "Reply with code snippet.  Enclose the code in triple backticks.",
+            "active_file": self.webserver.last_active_file
+        }
+        self.reply(reply_context)
 
     def on_message(self, message):
         try:
@@ -124,6 +159,7 @@ class ChatbotApp():
 
             # Send a reply if needed
             reply_context = self.should_reply(message)
+            
             if reply_context:
                 self.reply(reply_context)
     
@@ -187,6 +223,10 @@ class ChatbotApp():
             self.process_game_change(cmd)
         elif re.search("pin a message", cmd, re.IGNORECASE) is not None:
             self.process_pin_message(cmd)
+        elif re.search("start a break", cmd, re.IGNORECASE) is not None:
+            self.process_brb(message)
+        elif re.search("bring us back", cmd, re.IGNORECASE) is not None:
+            self.process_brb_back(message)
         else:
             self.log.error(f"Couldn't parse command: '{cmd}'")
 
@@ -223,11 +263,21 @@ class ChatbotApp():
         msg = re.sub(".*pin a message", "", cmd, re.IGNORECASE)
         self.say(f"/pin {msg}")
 
+    def process_brb(self, message):
+        self.macros.exec_brb()
+        self.append_to_history(message)
+        self.reply(f"Reply to {self.streamer_name} taking a break")
+
+    def process_brb_back(self, message):
+        self.macros.exec_back()
+        self.append_to_history(message)
+        self.reply(f"Reply to {self.streamer_name} coming back from a break")
+
     def is_talking_to_me(self, message):
         if self.is_from_me(message):
             return False
         
-        pattern = f"\\b({self.nicknames}|you|we|your|our)\\b"
+        pattern = f"\\b({self.nicknames}|you|your|our)\\b"
 
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
     
@@ -324,13 +374,23 @@ class ChatbotApp():
 
         return result
 
+    def is_code_request(self, message):
+        pattern = f"\\b(write|create|make|give|show|build)\\b.*?\\b(code|snippet|script|function|method|class|object|variable|constant|macro)\\b"
+
+        result = re.search(pattern, message['text'], re.IGNORECASE) is not None
+    
+        if result:
+            self.log.debug(f"Message matches is_code_request")
+
+        return result
+
     def is_discussion_continued(self, message):
         if self.is_from_me(message):
             return False
         
         return (
             self.is_talking_to_me(message) and
-            self.time_since_last_message_or_tts() < 30 and
+            self.time_since_last_message_or_tts() < 15 and
             not self.just_spoke(message)
         )
     
@@ -366,23 +426,44 @@ class ChatbotApp():
 
         if self.is_likely_spam(message):
             self.log.debug("Replying to likely spam")
-            result = "Reply to someone sending spam."
+            result = {
+                "type": "spam",
+                "prompt": "Reply to someone sending spam."
+            }
         
         elif self.is_discussion_continued(message):
             self.log.debug("Replying to continued discussion")
-            result = "Reply a continued converation."
+            result = {
+                "type": "discussion",
+                "prompt": "Reply a continued converation."
+            }
 
         elif self.is_activated(message):
             self.log.debug("Replying to activation")
 
             if self.is_boredom_request(message):
-                result = self.reply_boredom_ideas()
+                result = {
+                    "type": "boredom",
+                    "prompt": self.reply_boredom_ideas()
+                }
+            elif self.is_code_request(message):
+                result = {
+                    "type": "code",
+                    "prompt": "Reply with code snippet.  Enclose the code in triple backticks.",
+                    "active_file": (self.webserver and self.webserver.last_active_file) or None
+                }
             else:
-                result = "Reply to being addressed directly."
+                result = {
+                    "type": "activation",
+                    "prompt":"Reply to being addressed directly."
+                }
 
         elif self.time_since_last_interaction() > 900:
             self.log.debug("Replying to long interaction delay")
-            result = self.reply_boredom_ideas()
+            result = {
+                "type": "boredom",
+                "prompt": self.reply_boredom_ideas()
+            }
 
         if result:
             # Reset last interaction time early so I don't end up with a race condition
@@ -426,6 +507,11 @@ class ChatbotApp():
         else:
             return self.should_reply_legacy(message)
 
+    def is_code_response(self, response):
+        return re.search("```", response) is not None
+    
+    def is_empty_response(self, response):
+        return re.search("^\\s*$", response) is not None
 
     def reply(self, context):
         self.log.info("Getting response")
@@ -434,7 +520,18 @@ class ChatbotApp():
         self.log.info(f"Responding with '{response}'")
         self.say(response)
 
+    def strip_code(self, message):
+        return re.sub("```.*?(?:```\n*|$)", "", message, flags=re.DOTALL)
+
     def say(self, message):
+        if self.webserver and self.is_code_response(message):
+            self.webserver.say(message)
+            message = self.strip_code(message)
+            self.log.debug(f"Message to send after stripping code: '{message}'")
+
+            if self.is_empty_response(message):
+                message = "sure, take a look at this."
+            
         # If we're sending to twitch, we don't need to call on_say since the
         # message will come back through restream
         if self.twitch:
@@ -449,9 +546,12 @@ class ChatbotApp():
         
         if self.tts:
             self.tts.say(message)
-
+        
         self.last_interaction_time = time.time()
         self.last_message_time = time.time()
+
+    def tick(self):
+        self.tts.tick()
 
 def run_tests():
     data = {

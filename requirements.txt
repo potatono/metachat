@@ -7,3 +7,4 @@ websocket
 pyaudio
 rev_ai
 pyttsx3
+websockets
