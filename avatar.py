@@ -1,6 +1,7 @@
 import time
 import json
 import re
+from random import random
 from threading import Thread
 
 import azure.cognitiveservices.speech as speechsdk
@@ -23,6 +24,8 @@ class AvatarApp():
     left_eye_id = 0
     right_eye_id = 0
     is_ack = False
+    angle = 0.0
+    scale = 1.0
 
     def __init__(self):
         self.log = Logger(f"avatar")
@@ -64,13 +67,14 @@ class AvatarApp():
         self.init_images()
         self.init_pygame()
         self.init_obs()
+        self.init_corrections()
 
     def start(self):
         self.log.info(f"Starting Avatar engine")
         self.running = True
 
         self.init_tts()
-        self.blit_visime()
+        self.blit_viseme()
         self.update_obs()
 
     def shutdown(self):
@@ -83,13 +87,16 @@ class AvatarApp():
     def say(self, text):
         self.log.info(f"Appending {text}")
         self.is_ack = False
+
         self.queue.append(text)
 
     def ack(self):
+        if self.is_ack:
+            return
+        
+        self.is_ack = True
         self.left_eye_id = 6
         self.right_eye_id = 6
-        self.is_ack = True
-
         self.viseme_id = 21
         self.is_talking = True
         self.viseme_changed = True
@@ -114,10 +121,26 @@ class AvatarApp():
         self.clock = pygame.time.Clock()
         pygame.mixer.init()
         self.ack_sound = pygame.mixer.Sound("avatar/ack.wav")
+        self.temp_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
 
     def init_obs(self):
         if self.enable_obs_updates:
             self.obs = ObsApp()
+
+    def init_corrections(self):
+        self.corrections = []
+
+        xlat = CONFIG.get("avatar", "corrections")
+        parts = re.split("\\s*,\\s*", xlat)
+
+        for part in parts:
+            self.corrections.append(part.split(':'))
+
+    def apply_corrections(self, text):
+        for (bad,good) in self.corrections:
+            text = re.sub(f"\\b{bad}\\b", f"{good}", text, re.IGNORECASE)
+        
+        return text
 
     def close_pygame(self):
         pygame.display.quit()
@@ -131,33 +154,48 @@ class AvatarApp():
     
     def on_viseme(self, evt):
         self.viseme_id = evt.viseme_id
+
+        if self.viseme_id == 0:
+            self.angle = random() * 20 - 10
+            self.scale = 1.0 + (random() * 0.5 - 0.25)
+
         self.viseme_changed = True
 
     def on_completed(self, evt):
         self.log.info("TTS complete")
         self.last_completion = time.time()
         self.is_talking = False
+        self.scale = 1.0
+        self.angle = 0.0
         self.update_obs()
         self.update_title()
         self.future.get()
 
-    def blit_visime(self):
+    def blit_viseme(self):
         #self.screen.blit(self.images[self.viseme_id],(0,0))
 
         # Set background color
         self.screen.fill(pygame.Color('#'+self.background_color))
 
+        # Clear the temp_surface with transparent pixels
+        self.temp_surface.fill((0,0,0,0))
+        
         # Draw the body
-        self.screen.blit(self.body,(0,0))
+        self.temp_surface.blit(self.body,(0,0))
 
         # Draw the mouth
-        self.screen.blit(self.mouths[self.viseme_id],self.mouth_position)
+        self.temp_surface.blit(self.mouths[self.viseme_id],self.mouth_position)
 
         # Draw the eyes
-        self.screen.blit(self.eyes[self.left_eye_id],self.left_eye_position)
-        self.screen.blit(self.eyes[self.right_eye_id],self.right_eye_position)
+        self.temp_surface.blit(self.eyes[self.left_eye_id],self.left_eye_position)
+        self.temp_surface.blit(self.eyes[self.right_eye_id],self.right_eye_position)
+
+        # Rotate and scale
+        rotated = pygame.transform.rotozoom(self.temp_surface, self.angle, self.scale)
+        rotated_rect = rotated.get_rect(center=(512, 512))
 
         # Update the display
+        self.screen.blit(rotated,rotated_rect)
         pygame.display.flip()
 
     def init_tts(self):
@@ -203,6 +241,7 @@ class AvatarApp():
             self.log.info("Starting TTS")
             msg = self.queue.pop(0)
             msg = self.process_emoji(msg)
+            msg = self.apply_corrections(msg)
             self.log.info(f"Saying {msg}")
             self.is_talking = True
             self.update_obs()
@@ -211,7 +250,7 @@ class AvatarApp():
 
     def update_viseme(self):
         if self.viseme_changed:
-            self.blit_visime()
+            self.blit_viseme()
             self.viseme_changed = False
 
     def update_obs(self):

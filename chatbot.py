@@ -43,6 +43,11 @@ class ChatbotApp():
         self.chatgpt = CompletionApp()
         self.macros = Macros()
 
+        self.context = {
+            "clip": None,
+            "time": None
+        }
+
         if CONFIG.getboolean("chatbot", "send_to_twitch", fallback=True):
             self.oauth = OAuthApp(CONFIG.get("chatbot", "twitch_oauth_section"))
             self.twitch = TwitchApp(self.name, self.streamer_name)
@@ -119,7 +124,7 @@ class ChatbotApp():
         if self.tts:
             self.tts.ack()
             
-        message = { "author": self.streamer_name, "text": text }
+        message = { "author": self.streamer_name, "text": text, "sent": time.time() }
 
         self.append_to_history(message)
         reply_context = {
@@ -227,8 +232,19 @@ class ChatbotApp():
             self.process_brb(message)
         elif re.search("bring us back", cmd, re.IGNORECASE) is not None:
             self.process_brb_back(message)
+        elif re.search("tell me when (?:did )?i", cmd, re.IGNORECASE) is not None:
+            self.process_when_i(message)
+        elif re.search("find the last clip", cmd, re.IGNORECASE) is not None:
+            self.process_find_last_clip(message)
+        elif re.search("(?:save|start|make) a clip", cmd, re.IGNORECASE) is not None:
+            self.process_save_clip(message)
+        elif re.search("(?:edit|trip|cut) the clip", cmd, re.IGNORECASE) is not None:
+            self.process_edit_clip(message)
+        elif re.search("post (?:the|that) clip", cmd, re.IGNORECASE) is not None:
+            self.process_post_clip(message)
         else:
             self.log.error(f"Couldn't parse command: '{cmd}'")
+            return self.reply({"type":"command", "prompt": "Reply to a command I don't understand."})
 
     def process_ignore(self, cmd):
         num = number_parser.parse(cmd)
@@ -266,12 +282,125 @@ class ChatbotApp():
     def process_brb(self, message):
         self.macros.exec_brb()
         self.append_to_history(message)
-        self.reply(f"Reply to {self.streamer_name} taking a break")
+        self.reply({ "type":"command", "prompt": f"Reply to {self.streamer_name} taking a break"})
 
     def process_brb_back(self, message):
         self.macros.exec_back()
         self.append_to_history(message)
-        self.reply(f"Reply to {self.streamer_name} coming back from a break")
+        self.reply({ "type":"command", "prompt": f"Reply to {self.streamer_name} coming back from a break"})
+
+    def process_find_last_clip(self, message):
+        self.append_to_history(message)
+        clip = self.macros.exec_save_clip()
+
+        if clip is None:
+            self.log.error("Failed to save clip")
+            self.reply({ "type":"command", "prompt": "Reply to clip not being found."})
+            return
+        
+        self.context['clip'] = clip
+        self.reply({ 
+            "type":"command", 
+            "prompt": (f"Reply to finding a clip named {clip['filename']} "
+                       f"that has a duration of {clip['duration']} seconds.")
+        })
+
+    def process_save_clip(self, message):
+        self.append_to_history(message)
+        clip = self.macros.exec_save_clip()
+
+        if clip is None:
+            self.log.error("Failed to save clip")
+            self.reply({ "type":"command", "prompt": "Reply to failed clip save."})
+            return
+        
+        self.context['clip'] = clip
+        self.reply({ 
+            "type":"command", 
+            "prompt": (f"Reply to saving a clip named {clip['filename']} "
+                       f"that has a duration of {clip['duration']} seconds.")
+        })
+
+    def get_seconds_from_message(self, message):
+        # Try to extract seconds from the message
+        pattern = "(\\d+) seconds"
+        match = re.search(pattern, message['text'], re.IGNORECASE)
+        if match:
+            seconds = match.group(1)
+            return int(seconds)
+        else:
+            return None
+
+    def process_edit_clip(self, message):
+        self.append_to_history(message)
+        clip = self.context['clip']
+        if clip is None:
+            self.log.error("No clip to edit")
+            self.reply({ "type":"command", "prompt": "Reply to not having a clip to edit."})
+            return
+        
+        duration = self.get_seconds_from_message(message) or self.context['time']
+
+        if duration is None:
+            self.log.error("No duration found in message")
+            self.reply({ "type":"command", "prompt": "Reply to not having a duration."})
+            return
+        
+        if duration > clip['duration']:
+            self.log.error("Duration is longer than clip")
+            self.reply({ "type":"command", "prompt": "Reply to duration being longer than clip."})
+            return
+        
+        new_clip = self.macros.exec_trim_clip(clip, duration)
+        if new_clip is None:
+            self.log.error("Failed to trim clip")
+            self.reply({ "type":"command", "prompt": "Reply to failed clip trim."})
+            return
+
+        self.context['clip'] = new_clip
+        self.reply({
+            "type":"command",
+            "prompt": (f"Reply to making a new clip named {new_clip['filename']}, "
+                        f"which is {new_clip['duration']} seconds long")
+        })
+
+    def process_post_clip(self, message):
+        self.append_to_history(message)
+        clip = self.context['clip']
+        if clip is None:
+            self.log.error("No clip to post")
+            self.reply({ "type":"command", "prompt": "Reply to not having a clip to post."})
+            return
+        
+        new_clip = self.macros.exec_post_clip(clip)
+        if new_clip is None:
+            self.log.error("Failed to post clip")
+            self.reply({ "type":"command", "prompt": "Reply to failed clip post."})
+            return
+
+        self.context['clip'] = new_clip
+
+        self.reply({
+            "type":"command",
+            "prompt": (f"Reply to posting the clip to {new_clip['url']}")
+        })
+
+    def process_when_i(self, message):
+        self.append_to_history(message)
+        response = self.reply({
+            "type":"history",
+            "message": message,
+            "prompt": ("Reply with a snarky message that includes \"t=TIME\", "
+                       f"where `TIME` is your best guess of the time {self.streamer_name} is asking about.")
+        })
+
+        pattern = "t=(\\d+)"
+        match = re.search(pattern, response, re.IGNORECASE)
+        if match:
+            t = match.group(1)
+            time_context = int(t)
+            self.log.info(f"Got time {time_context} from message")
+            self.context['time'] = time_context
 
     def is_talking_to_me(self, message):
         if self.is_from_me(message):
@@ -410,7 +539,7 @@ class ChatbotApp():
             self.log.debug(f"Message contains link, spam matches={matches}")
             matches += 1
 
-        pattern = '\\b(cheap|best|viewers|google)\\b'
+        pattern = '\\b(cheap|best|viewers|google|remove the space)\\b'
         if re.search(pattern, message['text'], re.IGNORECASE) is not None:
             self.log.debug(f"Message contains spam language, spam matches={matches}")
             matches += 1
@@ -477,7 +606,7 @@ class ChatbotApp():
         return words[word_idx]
     
     def reply_boredom_ideas(self):
-        idea = self.random_word(["a joke","a story","an anecdote","a fact","a poem","a song"])
+        idea = self.random_word(["a joke","a story","an anecdote","a fact", "a quote", "an idea"])
         subject = self.random_word()
 
         return (f"Reply with {idea} about this subject: \"{subject}\". "
@@ -514,11 +643,17 @@ class ChatbotApp():
         return re.search("^\\s*$", response) is not None
 
     def reply(self, context):
+        # Make sure we're in ack mode if we're using TTS
+        if self.tts and context['type'] != "boredom":
+            self.tts.ack()
+
         self.log.info("Getting response")
         response = self.chatgpt.get_response(self.history, context)
 
         self.log.info(f"Responding with '{response}'")
         self.say(response)
+
+        return response
 
     def strip_code(self, message):
         return re.sub("```.*?(?:```\n*|$)", "", message, flags=re.DOTALL)

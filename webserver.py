@@ -49,7 +49,7 @@ class WebserverApp:
                         else:
                             this.respond(response, mime_type or 'text/html')
                     else:
-                        this.respond("Not Found", "text/plain", 404)
+                        this.respond("Not Found".encode(), "text/plain", 404)
 
                 except Exception as ex:
                     self.log.error(ex)

@@ -22,15 +22,33 @@ class Copilot {
     }
 
     connect() {
+        if (this.ws) {
+            this.disconnect();
+        }
+
+        // store references to listeners
+        this.onOpenListener = (event) => { this.onopen(event); };
+        this.onMessageListener = (event) => { this.onmessage(event); };
+        this.onCloseListener = (event) => { this.onclose(event); };
+        this.onErrorListener = (event) => { this.onerror(event); };
+
+        // create websocket
         this.ws = new WebSocket('ws://' + window.location.hostname + ':9001');
-        this.ws.addEventListener('open', (event) => { this.onopen(event); });
-        this.ws.addEventListener('message', (event) => { this.onmessage(event); });
-        this.ws.addEventListener('close', (event) => { this.onclose(event); });
-        this.ws.addEventListener('error', (event) => { this.onerror(event); });
+
+        // attach listeners
+        this.ws.addEventListener('open', this.onOpenListener);
+        this.ws.addEventListener('message', this.onMessageListener);
+        this.ws.addEventListener('close', this.onCloseListener);
+        this.ws.addEventListener('error', this.onErrorListener);
     }
 
     disconnect() {
         if (this.ws) {
+            this.ws.removeEventListener('open', this.onOpenListener);
+            this.ws.removeEventListener('message', this.onMessageListener);
+            this.ws.removeEventListener('close', this.onCloseListener);
+            this.ws.removeEventListener('error', this.onErrorListener);
+
             try {
                 this.ws.close();
             }
