@@ -35,34 +35,49 @@ class Application():
         self.running = True
         self.loop()
 
+    def ensure_connected(self):
+        self.streamer.ensure_connected()
+        self.chat.ensure_connected()
+        self.chatbot.ensure_connected()
+        self.reactions.ensure_connected()
+
+    def shutdown(self):
+        self.chat.shutdown()
+        self.streamer.shutdown()
+        self.chatbot.shutdown()
+        self.reactions.shutdown()
+
+    def tick(self):
+        self.chatbot.tick()
+    
     def loop(self):
+        framecount = 0
         while self.running:
             try:
-                self.streamer.ensure_connected()
-                self.chat.ensure_connected()
-                self.chatbot.ensure_connected()
-                self.reactions.ensure_connected()
+                framecount += 1
 
-                #self.log.debug("tick")
-                sleep(3)
+                if framecount % 180 == 0:
+                    self.ensure_connected()
+
+                self.tick()
+
+                sleep(1/60.0)
             except KeyboardInterrupt:
                 break
             except Exception as ex:
                 self.log.error("Exception in metachat", exc_info=ex)
 
         self.log.info("Application loop finished..")
-        self.chat.shutdown()
-        self.streamer.shutdown()
-        self.chatbot.shutdown()
-        self.reactions.shutdown()
+        self.shutdown()
 
     def on_message(self, message):
         self.log.info("Passing message through to chatbot + reactions..")
         self.chatbot.on_message(message)
 
     def on_voice(self, text):
-        self.reactions.on_message(text)
+        self.reactions.on_voice(text)
+        self.chatbot.on_voice(text)
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     application = Application()
     application.start()
