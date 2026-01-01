@@ -1,6 +1,8 @@
 # Do not save secrets to source control
 secrets.ini
 
+chatbot-history.json
+
 # Do not save logs
 logs/
 

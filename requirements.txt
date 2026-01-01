@@ -1,10 +1,12 @@
 requests
 azure.cognitiveservices.speech
 pygame
-openai
+openai==0.28
 obs-websocket-py
 websocket
 pyaudio
+websocket-client<1.0.0,>=0.56.0
 rev_ai
 pyttsx3
 websockets
+number_parser

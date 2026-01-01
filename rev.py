@@ -7,8 +7,9 @@ import pyaudio
 from rev_ai.models import MediaConfig
 from rev_ai.streamingclient import RevAiStreamingClient
 
-from config import *
-from logs import *
+from config import CONFIG, SECRETS
+from logs import Logger
+from eventbus import eventbus, Events
 
 class MicrophoneStream(object):
     def __init__(self, rate, chunk):
@@ -80,10 +81,8 @@ class MicrophoneStream(object):
             yield b''.join(data)
 
 class TranscriptApp():
-    def __init__(self, on_text, on_voice):
+    def __init__(self):
         self.log = Logger("rev")
-        self.on_text_cb = on_text
-        self.on_voice_cb = on_voice
         self.mc = MediaConfig('audio/x-raw', 'interleaved', 44100, 'S16LE', 1)
         self.token = SECRETS.get("rev.ai", "token")
         self.streamclient = RevAiStreamingClient(self.token, self.mc)
@@ -153,7 +152,7 @@ class TranscriptApp():
 
             text = self.apply_corrections(text)
             
-            self.on_voice_cb(text)
+            eventbus.publish(Events.STREAMER_PHRASE, data=text, source="microphone")
             self.append_text(text)
 
     def append_text(self, text):
@@ -172,7 +171,7 @@ class TranscriptApp():
 
     def send_text(self):
         self.log.info("Sending text '%s'", self.text)
-        self.on_text_cb(self.text)
+        eventbus.publish(Events.STREAMER_LINE, data=self.text, source="microphone")
         self.sendTimer = None
         self.text = None
 

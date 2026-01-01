@@ -4,17 +4,17 @@ import os
 import shutil
 import time
 
-from config import *
-from logs import *
+from config import CONFIG
+from logs import Logger
+from eventbus import eventbus, Events
 from obs import ObsApp
 
 class ReactionsApp():
     token = None
 
-    def __init__(self, on_say=None):
+    def __init__(self):
         self.log = Logger("reactions")
         self.history = []
-        self.on_say = on_say
 
         self.clips_path = CONFIG.get("reactions", "clips_path")
         self.source_path = CONFIG.get("reactions", "source_path")
@@ -25,6 +25,12 @@ class ReactionsApp():
 
         ## Used to disable the reaction scene item after some time has passed
         self.reset_reaction_on = None
+
+        eventbus.create_subscriber(
+            name="reactions",
+            event_types=[Events.STREAMER_PHRASE],
+            callback=self.on_streamer_phrase
+        )
     
     def ensure_connected(self):
         self.obs.ensure_connected()
@@ -32,7 +38,8 @@ class ReactionsApp():
     def shutdown(self):
         self.obs.shutdown()
 
-    def on_voice(self, text):
+    def on_streamer_phrase(self, event):
+        text = event.data
         text = re.sub("[^\\w\\s]", "", text)
 
         self.reset_reaction()

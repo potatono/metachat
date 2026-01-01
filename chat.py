@@ -1,20 +1,22 @@
 from datetime import datetime
-from time import time
+import time
 
 from restream import RestreamApp
 from oauth import OAuthApp
 
-from logs import *
-from config import *
+from logs import Logger
+from config import CONFIG
+from eventbus import eventbus, Events
 
 class ChatApp():
     token = None
 
-    def __init__(self, on_message):
+    def __init__(self):
         self.log = Logger("chat")
-        self.on_message_cb = on_message
-        self.restream = RestreamApp(on_message=lambda m: self.on_message(m))
+        self.streamer_name = CONFIG.get("streamer", "name")
+        self.restream = RestreamApp()
         self.oauth = OAuthApp("restream.io")
+        self.events = eventbus.create_subscriber(name="chat", event_types=[Events.CHAT_MESSAGE], callback=self.on_chat_message)
         self.open_chat_log()
 
     def ensure_connected(self):
@@ -45,7 +47,7 @@ class ChatApp():
 
         if path:
             self.log.info(f"Saving log to {path}..")
-            self.start_time = time()
+            self.start_time = time.time()
             self.chat_log_file = open(path, "a")
             self.chat_log({'author': 'METACHAT', 'text': f"*** Chat session started on {now.strftime('%c')} ***"})
         else:
@@ -53,12 +55,11 @@ class ChatApp():
 
     def chat_log(self, message):
         if self.chat_log_file:
-            t = time() - self.start_time
+            t = time.time() - self.start_time
             print(f"[{t:10.2}] {message['author']}: {message['text']}", file=self.chat_log_file)
             self.chat_log_file.flush()
-
-    def on_message(self, message):
-        self.on_message_cb(message)
+            
+    def on_chat_message(self, event):
+        self.log.debug(f"Received event: {event}")
+        message = event.data
         self.chat_log(message)
-
-

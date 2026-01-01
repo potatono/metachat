@@ -13,6 +13,7 @@ class ObsApp:
     
     def __init__(self):
         self.log = Logger("obs")
+        self.enabled = CONFIG.getboolean("obs", "enabled", fallback=False)
         self.host = CONFIG.get("obs", "websocket_host", fallback="localhost")
         self.port = CONFIG.getint("obs", "websocket_port", fallback=4455)
         self.secret = SECRETS.get("obs", "websocket_secret")
@@ -22,7 +23,7 @@ class ObsApp:
         self.log.debug(f"Got message {message}")
 
     def ensure_connected(self):
-        if not self.ws:
+        if not self.ws and self.enabled:
             try:
                 self.ws = obsws(self.host, self.port, self.secret)
                 self.ws.connect()

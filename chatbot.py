@@ -17,16 +17,16 @@ from webserver import WebserverApp
 
 from macros import Macros
 
-from config import *
-from logs import *
+from config import CONFIG
+from logs import Logger
+from eventbus import eventbus, Events
 
 class ChatbotApp():
     token = None
 
-    def __init__(self, on_say=None):
+    def __init__(self):
         self.log = Logger("chatbot")
         self.history = []
-        self.on_say = on_say
 
         self.name = CONFIG.get("chatbot", "name")
         self.streamer_name = CONFIG.get("streamer", "name")
@@ -64,6 +64,13 @@ class ChatbotApp():
 
         if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
             self.webserver = WebserverApp(on_copilot_message=self.on_copilot_message)
+
+        eventbus.create_subscriber(
+            name="chatbot", 
+            event_types=[Events.CHAT_MESSAGE, Events.STREAMER_PHRASE], 
+            callback=self.on_event
+        )
+
 
     def ensure_connected(self):
         if self.twitch:
@@ -109,6 +116,12 @@ class ChatbotApp():
             self.history.pop(0)
         
         self.save_history()
+
+    def on_event(self, event):
+        if event.type == Events.CHAT_MESSAGE:
+            self.on_message(event.data)
+        elif event.type == Events.STREAMER_PHRASE:
+            self.on_voice(event.data)
 
     def on_voice(self, text):
         self.log.debug(f"Got voice: {text}")
@@ -712,7 +725,8 @@ class ChatbotApp():
                 "text": message,
                 "sent": time.time()
             }
-            self.on_say(msg)
+            #self.on_say(msg)
+            eventbus.publish(Events.CHAT_MESSAGE, data=msg, source="chatbot")
         
         if self.tts:
             self.tts.say(message)

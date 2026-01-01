@@ -4,8 +4,9 @@ import json
 
 import websocket
 
-from config import *
-from logs import *
+from config import CONFIG
+from logs import Logger
+from eventbus import eventbus, Events
 
 ''' WebSocket App for communicating with restream.io '''
 class RestreamApp():
@@ -14,13 +15,12 @@ class RestreamApp():
     thread = None
     running = False
 
-    def __init__(self, on_message):
+    def __init__(self):    
         self.log = Logger("restream")
-        self.on_message_cb = on_message
         self.thread = Thread(daemon=True, target=self.loop)
 
-    def on_message(self, message):
-        data = json.loads(message)
+    def on_message(self, rs_msg):
+        data = json.loads(rs_msg)
         action = data['action']
 
         self.log.info(action)
@@ -29,13 +29,14 @@ class RestreamApp():
             author = payload['author']['displayName']
             text = payload['text']
 
-            m = {
+            chat_msg = {
                 "author": author,
                 "text": text,
                 "sent": time.time()
             }
             self.log.info(f"<{author}> {text}")
-            self.on_message_cb(m)
+            #self.on_message_cb(m)
+            eventbus.publish(Events.CHAT_MESSAGE, data=chat_msg, source="restream")
 
     def loop(self):
         self.log.info("Starting WS run_forever")
