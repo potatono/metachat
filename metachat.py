@@ -159,8 +159,8 @@ class Application():
                 # Add input to log display
                 self.add_log_line(f"Input: {self.current_line}")
                 # Publish event
-                eventbus.publish(Events.STREAMER_LINE, self.current_line.strip(), "keyboard")
                 eventbus.publish(Events.STREAMER_PHRASE, self.current_line.strip(), "keyboard")
+                eventbus.publish(Events.STREAMER_LINE, self.current_line.strip(), "keyboard")
                 self.current_line = ""
                 self.redraw_input()
         # elif key == 32:  # Space

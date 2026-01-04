@@ -707,6 +707,10 @@ class ChatbotApp():
         return re.sub("```.*?(?:```\n*|$)", "", message, flags=re.DOTALL)
 
     def say(self, message):
+        if message is None:
+            self.log.error("Got message of None to say, returning early.")
+            return
+        
         if self.webserver and self.is_code_response(message):
             self.webserver.say(message)
             message = self.strip_code(message)

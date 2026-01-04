@@ -4,6 +4,11 @@ import random
 import time
 import openai
 
+try:
+    from importlib import metadata
+except ImportError:
+    import importlib_metadata as metadata
+
 from config import *
 from logs import *
 
@@ -134,6 +139,9 @@ class CompletionApp():
         template = open(template_path, "r", encoding="utf8").read()
         messages.append({ "role":"developer", "content": template.format(**self.template_data) })
 
+        if self.api == "responses":
+            messages.append({ "role":"developer", "content":"Messages from the streamer and their audience are prefixed with their name in brackets." })  
+        
         ## If this is a code response, add info and contents of the file being edited
         ## Only include the last message from the user as the question
         if context['type'] == 'code':
@@ -158,7 +166,11 @@ class CompletionApp():
             for message in history:
                 role = (message['author'] == self.name and "assistant") or "user"
                 author = re.sub("[^A-Za-z0-9_\-]", "_", message['author'],flags=re.A)
-                messages.append({ "role":role, "content":message['text'], "name":author })
+
+                if self.api == "responses":
+                    messages.append({ "role":role, "content":f"[{author}] {message['text']}" })
+                else:
+                    messages.append({ "role":role, "content":message['text'], "name":author })
 
         ## Add the contextual prompt to the end
         messages.append({ "role":"developer", "content":context['prompt'] })
@@ -241,6 +253,55 @@ class CompletionApp():
     def history_string(self, history):
         return "\n".join([f"{i['author']}: {i['text']}" for i in history])
 
+    def get_responses_response(self, history, context):
+        """ Uses the OpenAI Responses API to get a response """
+        
+        # Check OpenAI module version
+        try:
+            openai_version = metadata.version("openai")
+            major, minor = map(int, openai_version.split('.')[:2])
+            if major == 0 and minor <= 28:
+                self.log.error(f"OpenAI module version {openai_version} is too old for Responses API. Need >0.28")
+                return None
+        except Exception as e:
+            self.log.error(f"Could not check OpenAI version: {e}")
+            return None
+        
+        try:
+            # Get messages in the same format as chat API
+            messages = self.get_chat_messages(history, context)
+            
+            # Determine model and tokens based on context type
+            model = self.model
+            tokens = self.max_tokens
+            
+            if context['type'] == 'code' or context['type'] == 'clip':
+                model = self.code_model
+                tokens = self.max_tokens_code
+            elif context['type'] == 'boredom':
+                tokens = self.max_tokens_boredom
+            
+            # Use the newer Responses API
+            response = openai.responses.create(
+                model=model,
+                input=messages
+                
+            )
+            
+            self.log.debug(response)
+            text = response.output_text
+            
+            if len(text) == 0:
+                self.log.error("Got empty text response from OpenAI Responses API")
+                self.log.error(response)
+                return None
+                
+            return text
+            
+        except Exception as e:
+            self.log.error(f"OpenAI Responses API failed: {e}")
+            return None
+
     def get_response(self, history, context):
         if self.api == "completion":
             history_string = self.history_string(history)
@@ -249,6 +310,8 @@ class CompletionApp():
         elif self.api == "chat":
             return self.get_chat_response(history, context)
         
+        elif self.api == "responses":
+            return self.get_responses_response(history, context)
         else:
             self.log.error(f"Invalid chatgpt api: {self.api}")
             return None
