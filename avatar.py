@@ -222,6 +222,9 @@ class AvatarApp():
                 self.viseme_changed = True
                 break
 
+        ## Strip any remaining emojis or other high unicode chars
+        text = re.sub(r'[^\x00-\x7F]+','', text)
+
         return text
 
     def process_ack(self):

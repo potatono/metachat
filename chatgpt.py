@@ -29,6 +29,8 @@ class CompletionApp():
         self.max_tokens = CONFIG.getint("openai.com", "max_tokens", fallback=256)
         self.max_tokens_code = CONFIG.getint("openai.com", "max_tokens_code", fallback=32767)
         self.max_tokens_boredom = CONFIG.getint("openai.com", "max_tokens_boredom", fallback=512)
+        self.reasoning_effort = CONFIG.get("openai.com", "reasoning_effort", fallback="low")
+        self.reasoning_effort_code = CONFIG.get("openai.com", "reasoning_effort_code", fallback="medium")
 
 
     def get_template_data(self):
@@ -116,7 +118,7 @@ class CompletionApp():
         for message in history:
             if 'sent' not in message:
                 continue
-            clip_history += f"t={int(now-message['sent'])} {message['author']}: {message['text']}\n"
+            clip_history += f"t={int(now-message['sent'])} [{message['author']}] {message['text']}\n"
 
         clip_history += "```"
         return clip_history
@@ -140,7 +142,8 @@ class CompletionApp():
         messages.append({ "role":"developer", "content": template.format(**self.template_data) })
 
         if self.api == "responses":
-            messages.append({ "role":"developer", "content":"Messages from the streamer and their audience are prefixed with their name in brackets." })  
+            messages.append({ "role":"developer", "content":"Messages from the streamer and their audience are prefixed with their name in brackets." })
+            messages.append({ "role":"developer", "content":"IMPORTANT: Messages from the bot are not prefixed." })
         
         ## If this is a code response, add info and contents of the file being edited
         ## Only include the last message from the user as the question
@@ -168,7 +171,10 @@ class CompletionApp():
                 author = re.sub("[^A-Za-z0-9_\-]", "_", message['author'],flags=re.A)
 
                 if self.api == "responses":
-                    messages.append({ "role":role, "content":f"[{author}] {message['text']}" })
+                    if role == "user":
+                        messages.append({ "role":role, "content":f"[{author}] {message['text']}" })
+                    else:
+                        messages.append({ "role":role, "content":message['text'] })
                 else:
                     messages.append({ "role":role, "content":message['text'], "name":author })
 
@@ -273,22 +279,19 @@ class CompletionApp():
             
             # Determine model and tokens based on context type
             model = self.model
-            tokens = self.max_tokens
+            reasoning_effort = self.reasoning_effort
             
             if context['type'] == 'code' or context['type'] == 'clip':
                 model = self.code_model
-                tokens = self.max_tokens_code
-            elif context['type'] == 'boredom':
-                tokens = self.max_tokens_boredom
+                reasoning_effort = self.reasoning_effort_code
             
             # Use the newer Responses API
             response = openai.responses.create(
                 model=model,
-                input=messages
-                
+                input=messages,
+                reasoning={ "effort": reasoning_effort }
             )
             
-            self.log.debug(response)
             text = response.output_text
             
             if len(text) == 0:
