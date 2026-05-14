@@ -31,7 +31,10 @@ class TwitchApp():
             self.client_id = CONFIG.get("twitch.tv", "client_id", fallback=None)        
             self.api_url = CONFIG.get("twitch.tv", "chat_api_url", fallback=None)
             self.broadcaster_id = CONFIG.getint("twitch.tv", "broadcaster_id", fallback=None)
-            self.user_id = CONFIG.getint("twitch.tv", "user_id", fallback=None)
+            if name == channel:
+                self.user_id = self.broadcaster_id
+            else:
+                self.user_id = CONFIG.getint("twitch.tv", "user_id", fallback=None)
 
     def on_ws_message(self, ws, message):
         self.log.info(message)
