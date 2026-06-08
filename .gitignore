@@ -2,6 +2,7 @@
 secrets.ini
 
 chatbot-history.json
+chatbot-dyson-history.json
 
 # Do not save logs
 logs/
