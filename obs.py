@@ -105,3 +105,17 @@ class ObsApp:
         
         self.ws.call(requests.SaveReplayBuffer())
         self.log.debug(f"Saved clip")
+
+    def save_screenshot(self, path):
+        if self.ws is None:
+            return None
+        
+        scene_name = self.get_current_scene_name()
+        self.ws.call(requests.SaveSourceScreenshot(
+            sourceName=scene_name,
+            imageFormat="jpg",
+            imageFilePath=path
+        ))
+
+        return path
+        
