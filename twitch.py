@@ -33,7 +33,12 @@ class TwitchApp():
             self.broadcaster_id = CONFIG.getint("twitch.tv", "broadcaster_id", fallback=None)
             # The sending bot's user id; per-character so each character can post
             # to chat under its own Twitch account. Falls back to the shared one.
-            self.user_id = user_id if user_id is not None else CONFIG.getint("twitch.tv", "user_id", fallback=None)
+            if name == channel:
+                self.user_id = self.broadcaster_id
+            else:
+                # The sending bot's user id; per-character so each character can post
+                # to chat under its own Twitch account. Falls back to the shared one.
+                self.user_id = user_id if user_id is not None else CONFIG.getint("twitch.tv", "user_id", fallback=None)
 
     def on_ws_message(self, ws, message):
         self.log.info(message)

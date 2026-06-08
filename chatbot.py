@@ -280,7 +280,7 @@ class ChatbotApp():
 
         if len(game) > 0:
             self.log.info(f"Changing game to '{game}'")
-            self.llm.game = game
+            self.chatgpt.game = game
             CONFIG.set("game", "name", game)
             self.say(f"[cmd] Okay I set the game to {game}.")
             # TODO Save config
@@ -786,7 +786,7 @@ class ChatbotApp():
             self.tts.ack(character=self.character)
 
         self.log.info("Getting response")
-        response = self.llm.get_response(self.history, context)
+        response = self.chatgpt.get_response(self.history, context)
 
         self.log.info(f"Responding with '{response}'")
         self.say(response)
