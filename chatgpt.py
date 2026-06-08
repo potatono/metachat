@@ -15,16 +15,16 @@ from logs import *
 openai.api_key = SECRETS.get("openai.com", "token")
 
 class CompletionApp():
-    def __init__(self):
+    def __init__(self, name=None, prompt_template=None, model=None):
         self.log = Logger("chatgpt")
-        self.name = CONFIG.get("chatbot", "name")
+        self.name = name or CONFIG.get("chatbot", "name")
         self.streamer = CONFIG.get("streamer", "name")
         self.game = CONFIG.get("game", "name")
         self.template_data = self.get_template_data()
-        self.template_path = CONFIG.get("openai.com", "prompt_template")
+        self.template_path = prompt_template or CONFIG.get("openai.com", "prompt_template")
         self.examples_path = CONFIG.get("openai.com", "examples_path")
         self.api = CONFIG.get("openai.com", "api", fallback="chat")
-        self.model = CONFIG.get("openai.com", "model", fallback="gpt-4o")
+        self.model = model or CONFIG.get("openai.com", "model", fallback="gpt-4o")
         self.code_model = CONFIG.get("openai.com", "code_model", fallback=self.model)
         self.max_tokens = CONFIG.getint("openai.com", "max_tokens", fallback=256)
         self.max_tokens_code = CONFIG.getint("openai.com", "max_tokens_code", fallback=32767)
@@ -66,7 +66,7 @@ class CompletionApp():
         return examples
                 
     def get_completion_prompt(self, history_string, context):
-        paths = [ CONFIG.get("openai.com", "prompt_template") ]
+        paths = [ self.template_path ]
         paths.extend(self.get_examples())
 
         prompt = ""
@@ -137,8 +137,7 @@ class CompletionApp():
         messages = []
 
         ## Read the template and add the output as the first message
-        template_path = CONFIG.get("openai.com", "prompt_template")
-        template = open(template_path, "r", encoding="utf8").read()
+        template = open(self.template_path, "r", encoding="utf8").read()
         messages.append({ "role":"developer", "content": template.format(**self.template_data) })
 
         if self.api == "responses":

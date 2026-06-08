@@ -8,7 +8,7 @@ from queue import Queue
 
 from chat import ChatApp
 from streamer import StreamerApp
-from chatbot import ChatbotApp
+from chatbot_manager import ChatbotManager
 from reactions import ReactionsApp
 
 from config import CONFIG
@@ -45,9 +45,9 @@ class Application():
     def init_components(self):
         """Initialize components after curses is set up"""
         self.log = Logger("metachat")
-        self.chat = ChatApp()        
+        self.chat = ChatApp()
         self.streamer = StreamerApp()
-        self.chatbot = ChatbotApp()
+        self.chatbot = ChatbotManager()
         self.reactions = ReactionsApp()
 
     def start(self):

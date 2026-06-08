@@ -16,7 +16,7 @@ class TwitchApp():
     thread = None
     running = False
 
-    def __init__(self, name, channel):
+    def __init__(self, name, channel, user_id=None):
         self.log = Logger(f"twitch {name}")
         self.name = name
         self.channel = channel
@@ -26,12 +26,14 @@ class TwitchApp():
 
         if self.send_method == "ws":
             self.ws_url = CONFIG.get("twitch.tv", "chat_ws_url", fallback=None)
-            self.thread = Thread(daemon=True, target=self.loop)        
+            self.thread = Thread(daemon=True, target=self.loop)
         else:
-            self.client_id = CONFIG.get("twitch.tv", "client_id", fallback=None)        
+            self.client_id = CONFIG.get("twitch.tv", "client_id", fallback=None)
             self.api_url = CONFIG.get("twitch.tv", "chat_api_url", fallback=None)
             self.broadcaster_id = CONFIG.getint("twitch.tv", "broadcaster_id", fallback=None)
-            self.user_id = CONFIG.getint("twitch.tv", "user_id", fallback=None)
+            # The sending bot's user id; per-character so each character can post
+            # to chat under its own Twitch account. Falls back to the shared one.
+            self.user_id = user_id if user_id is not None else CONFIG.getint("twitch.tv", "user_id", fallback=None)
 
     def on_ws_message(self, ws, message):
         self.log.info(message)

@@ -1,7 +1,7 @@
 import time
 import json
 import re
-from random import random
+from random import random, randint
 from threading import Thread
 
 import azure.cognitiveservices.speech as speechsdk
@@ -11,6 +11,69 @@ from pygame.locals import *
 from config import *
 from logs import *
 from obs import ObsApp
+
+class Character():
+    def __init__(self, name, speech_key, speech_region):
+        self.log = Logger(f"avatar.{name}")
+        self.name = name
+        self.speech_key = speech_key
+        self.speech_region = speech_region
+
+        section = f"avatar.{name}"
+
+        self.voice = CONFIG.get(section, "voice", fallback="en-US-AvaMultilingualNeural")
+        self.background_color = CONFIG.get(section, "background_color", fallback="d7833a")
+
+        self.mouth_position = (
+            CONFIG.getint(section, "mouth_position_x", fallback=0),
+            CONFIG.getint(section, "mouth_position_y", fallback=0)
+        )
+        self.left_eye_position = (
+            CONFIG.getint(section, "left_eye_position_x", fallback=0),
+            CONFIG.getint(section, "left_eye_position_y", fallback=0)
+        )
+        self.right_eye_position = (
+            CONFIG.getint(section, "right_eye_position_x", fallback=0),
+            CONFIG.getint(section, "right_eye_position_y", fallback=0)
+        )
+
+        self.ack_eyes = CONFIG.get(section, "ack_eyes", fallback="rotate")
+        self.right_eye_mirrored = CONFIG.getboolean(section, "right_eye_mirrored", fallback=False)
+        self.emotion_eye_map = json.loads(CONFIG.get(section, "emotion_eye_map", fallback="{}"))
+
+        #self.images = []
+        self.mouths = []
+        self.eyes = []
+        self.body = None
+        self.ack_sound = None
+        self.tts = None
+
+    def init_images(self):
+        path = f"avatar/{self.name}"
+
+        for i in range(0, 22):
+            #self.images.append(pygame.image.load(f"{path}/{self.name}-id-{i}.png"))
+            self.mouths.append(pygame.image.load(f"{path}/mouth-id-{i}.png"))
+
+        for i in range(0, 10):
+            self.eyes.append(pygame.image.load(f"{path}/eye-id-{i}.png"))
+
+        self.body = pygame.image.load(f"{path}/{self.name}-body.png")
+
+    def init_sound(self):
+        self.ack_sound = pygame.mixer.Sound(f"avatar/{self.name}/ack.wav")
+
+    def init_tts(self, on_viseme, on_completed):
+        speech_config = speechsdk.SpeechConfig(subscription=self.speech_key,
+                                               region=self.speech_region)
+        audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+        speech_config.speech_synthesis_voice_name = self.voice
+
+        self.tts = speechsdk.SpeechSynthesizer(speech_config=speech_config,
+                                               audio_config=audio_config)
+        self.tts.viseme_received.connect(on_viseme)
+        self.tts.synthesis_completed.connect(on_completed)
+
 
 class AvatarApp():
     #thread = None
@@ -29,12 +92,7 @@ class AvatarApp():
 
     def __init__(self):
         self.log = Logger(f"avatar")
-        self.images = []
-        self.mouths = []
-        self.eyes = []
-        self.body = None
 
-        self.voice = CONFIG.get("avatar", "voice", fallback="en-US-AvaMultilingualNeural")
         self.width = CONFIG.getint("avatar", "width", fallback=900)
         self.height = CONFIG.getint("avatar", "height", fallback=860)
         self.speech_key = SECRETS.get("avatar", "speech_key", fallback=None)
@@ -44,30 +102,28 @@ class AvatarApp():
         self.enable_obs_updates = CONFIG.getboolean("avatar", "enable_obs_updates", fallback=False)
         self.source_name = CONFIG.get("avatar", "obs_source_name", fallback=None)
 
-        self.background_color = CONFIG.get("avatar", "background_color", fallback="d7833a")
-        self.mouth_position = (
-            CONFIG.getint("avatar", "mouth_position_x", fallback=0), 
-            CONFIG.getint("avatar", "mouth_position_y", fallback=0)        
-        )
-
-        self.left_eye_position = (
-            CONFIG.getint("avatar", "left_eye_position_x", fallback=0), 
-            CONFIG.getint("avatar", "left_eye_position_y", fallback=0)
-        
-        )
-        self.right_eye_position = (
-            CONFIG.getint("avatar", "right_eye_position_x", fallback=0), 
-            CONFIG.getint("avatar", "right_eye_position_y", fallback=0)
-        
-        )
-
         self.emoji_map = json.loads(CONFIG.get("avatar", "emoji_emotion_map", fallback="{}"))
-        self.emotion_map = json.loads(CONFIG.get("avatar", "emotion_eye_map", fallback="{}"))
 
+        self.init_characters()
         self.init_images()
         self.init_pygame()
         self.init_obs()
         self.init_corrections()
+
+    def init_characters(self):
+        names = re.split(r"\s*,\s*", CONFIG.get("avatar", "characters", fallback="bobby"))
+
+        self.characters = {}
+        for name in names:
+            self.characters[name] = Character(name, self.speech_key, self.speech_region)
+
+        # The character currently rendered / speaking
+        self.current = self.characters[names[0]]
+
+    def set_current(self, character):
+        if self.current.name != character:
+            self.current = self.characters[character]
+            self.viseme_changed = True
 
     def start(self):
         self.log.info(f"Starting Avatar engine")
@@ -84,17 +140,18 @@ class AvatarApp():
         self.running = False
         pygame.display.quit()
 
-    def say(self, text):
+    def say(self, text, character="bobby"):
         self.log.info(f"Appending {text}")
         self.is_ack = False
 
-        self.queue.append(text)
+        self.queue.append((character, text))
 
-    def ack(self):
+    def ack(self, character="bobby"):
         if self.is_ack:
             return
-        
+
         self.is_ack = True
+        self.set_current(character)
         self.left_eye_id = 6
         self.right_eye_id = 6
         self.viseme_id = 21
@@ -103,24 +160,21 @@ class AvatarApp():
         self.update_obs()
         self.update_title()
         self.is_talking = False
-        self.ack_sound.play()
+        self.current.ack_sound.play()
 
     def init_images(self):
-        for i in range(0,22):
-            self.images.append(pygame.image.load(f"avatar/bobby-id-{i}.png"))
-            self.mouths.append(pygame.image.load(f"avatar/mouth-id-{i}.png"))
-        
-        for i in range(0,10):
-            self.eyes.append(pygame.image.load(f"avatar/eye-id-{i}.png"))
+        for character in self.characters.values():
+            character.init_images()
 
-        self.body = pygame.image.load("avatar/bobby-body.png")
-    
     def init_pygame(self):
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("metachat")
         self.clock = pygame.time.Clock()
         pygame.mixer.init()
-        self.ack_sound = pygame.mixer.Sound("avatar/ack.wav")
+
+        for character in self.characters.values():
+            character.init_sound()
+
         self.temp_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
 
     def init_obs(self):
@@ -137,9 +191,14 @@ class AvatarApp():
             self.corrections.append(part.split(':'))
 
     def apply_corrections(self, text):
-        for (bad,good) in self.corrections:
-            text = re.sub(f"\\b{bad}\\b", f"{good}", text, re.IGNORECASE)
+        for (bad, good) in self.corrections:
+            text = re.sub(f"\\b{bad}\\b", good, text, re.IGNORECASE | re.A)
         
+        return text
+
+    def apply_nonword_filter(self, text):
+        text = re.sub("[^\w,\.!\s\']", "", text, re.A)
+
         return text
 
     def close_pygame(self):
@@ -172,23 +231,29 @@ class AvatarApp():
         self.future.get()
 
     def blit_viseme(self):
-        #self.screen.blit(self.images[self.viseme_id],(0,0))
+        character = self.current
+        #self.screen.blit(character.images[self.viseme_id],(0,0))
 
         # Set background color
-        self.screen.fill(pygame.Color('#'+self.background_color))
+        self.screen.fill(pygame.Color('#'+character.background_color))
 
         # Clear the temp_surface with transparent pixels
         self.temp_surface.fill((0,0,0,0))
-        
+
         # Draw the body
-        self.temp_surface.blit(self.body,(0,0))
+        self.temp_surface.blit(character.body,(0,0))
 
         # Draw the mouth
-        self.temp_surface.blit(self.mouths[self.viseme_id],self.mouth_position)
+        self.temp_surface.blit(character.mouths[self.viseme_id],character.mouth_position)
 
         # Draw the eyes
-        self.temp_surface.blit(self.eyes[self.left_eye_id],self.left_eye_position)
-        self.temp_surface.blit(self.eyes[self.right_eye_id],self.right_eye_position)
+        self.temp_surface.blit(character.eyes[self.left_eye_id],character.left_eye_position)
+
+        if character.right_eye_mirrored:
+            eye_image = pygame.transform.flip(character.eyes[self.right_eye_id], True, False)
+            self.temp_surface.blit(eye_image,character.right_eye_position)
+        else:
+            self.temp_surface.blit(character.eyes[self.right_eye_id],character.right_eye_position)
 
         # Rotate and scale
         rotated = pygame.transform.rotozoom(self.temp_surface, self.angle, self.scale)
@@ -199,16 +264,11 @@ class AvatarApp():
         pygame.display.flip()
 
     def init_tts(self):
-        speech_config = speechsdk.SpeechConfig(subscription=self.speech_key,
-                                               region=self.speech_region)
-        audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
-        speech_config.speech_synthesis_voice_name = self.voice
+        for character in self.characters.values():
+            character.init_tts(self.on_viseme, self.on_completed)
 
-        self.tts = speechsdk.SpeechSynthesizer(speech_config=speech_config, 
-                                               audio_config=audio_config)
-        self.tts.viseme_received.connect(self.on_viseme)
-        self.tts.synthesis_completed.connect(self.on_completed)
-
+    # This strips out emojis from the text, but uses them
+    # to adjust the eyes to show emotion state
     def process_emoji(self, text):
         self.left_eye_id = 0
         self.right_eye_id = 0
@@ -217,8 +277,8 @@ class AvatarApp():
             if emoji in text:
                 text = re.sub(emoji, "", text)
                 self.log.debug(f"Emoji {emoji} found, setting emotion to {emotion}.")
-                self.left_eye_id = self.emotion_map[emotion]['left']
-                self.right_eye_id = self.emotion_map[emotion]['right']
+                self.left_eye_id = self.current.emotion_eye_map[emotion]['left']
+                self.right_eye_id = self.current.emotion_eye_map[emotion]['right']
                 self.viseme_changed = True
                 break
 
@@ -229,27 +289,34 @@ class AvatarApp():
 
     def process_ack(self):
         if self.is_ack:
-            self.left_eye_id -= 1
-            if self.left_eye_id < 0:
-                self.left_eye_id = 9
+            if self.current.ack_eyes == "rotate":
+                self.left_eye_id -= 1
+                if self.left_eye_id < 0:
+                    self.left_eye_id = 9
 
-            self.right_eye_id += 1
-            if self.right_eye_id > 9:
-                self.right_eye_id = 0
-            
+                self.right_eye_id += 1
+                if self.right_eye_id > 9:
+                    self.right_eye_id = 0
+            elif self.current.ack_eyes == "random":
+                if random() < 0.1:
+                    self.left_eye_id = randint(0, 9)
+                    self.right_eye_id = self.left_eye_id
+
             self.viseme_changed = True
 
     def process_tts(self):
-        if len(self.queue)>0 and not self.is_talking:                
+        if len(self.queue)>0 and not self.is_talking:
             self.log.info("Starting TTS")
-            msg = self.queue.pop(0)
-            msg = self.process_emoji(msg)
+            character, msg = self.queue.pop(0)
+            self.set_current(character)
             msg = self.apply_corrections(msg)
+            msg = self.process_emoji(msg)
+            msg = self.apply_nonword_filter(msg)
             self.log.info(f"Saying {msg}")
             self.is_talking = True
             self.update_obs()
             self.update_title()
-            self.future = self.tts.speak_text_async(msg)
+            self.future = self.current.tts.speak_text_async(msg)
 
     def update_viseme(self):
         if self.viseme_changed:
@@ -289,6 +356,18 @@ class AvatarApp():
 
 if __name__ == "__main__":
     tts = AvatarApp()
+    print("Starting Dyson..")
+    tts.start()
+    tts.ack(character="dyson")
+    tts.loop(stop_after=3)
+    tts.running = True
+    tts.say("😥 Oh it's you. I'm Dyson. People say I'm apathetic.. 🙄 Whatever.", character="dyson")
+    tts.say("I guess I'll help out if I can, but don't expect me to be all sunshine and rainbows. 😔", character="dyson")
+    tts.say("I'm more of a 'why bother?' kind of robot. 🤔", character="dyson")
+    tts.say("So you do you. And I'll be over here.. Or something..", character="dyson")
+    tts.say("Now leave me alone! 🤬", character="dyson")
+    tts.loop(stop_after=23)
+    print("Switching to Bobby..")
     tts.start()
     tts.ack()
     tts.loop(stop_after=3)
