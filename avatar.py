@@ -137,9 +137,14 @@ class AvatarApp():
             self.corrections.append(part.split(':'))
 
     def apply_corrections(self, text):
-        for (bad,good) in self.corrections:
-            text = re.sub(f"\\b{bad}\\b", f"{good}", text, re.IGNORECASE)
+        for (bad, good) in self.corrections:
+            text = re.sub(f"\\b{bad}\\b", good, text, re.IGNORECASE | re.A)
         
+        return text
+
+    def apply_nonword_filter(self, text):
+        text = re.sub("[^\w,\.!\s]", "", text, re.A)
+
         return text
 
     def close_pygame(self):
@@ -209,6 +214,8 @@ class AvatarApp():
         self.tts.viseme_received.connect(self.on_viseme)
         self.tts.synthesis_completed.connect(self.on_completed)
 
+    # This strips out emojis from the text, but uses them
+    # to adjust the eyes to show emotion state
     def process_emoji(self, text):
         self.left_eye_id = 0
         self.right_eye_id = 0
@@ -243,8 +250,9 @@ class AvatarApp():
         if len(self.queue)>0 and not self.is_talking:                
             self.log.info("Starting TTS")
             msg = self.queue.pop(0)
-            msg = self.process_emoji(msg)
             msg = self.apply_corrections(msg)
+            msg = self.process_emoji(msg)
+            msg = self.apply_nonword_filter(msg)
             self.log.info(f"Saying {msg}")
             self.is_talking = True
             self.update_obs()

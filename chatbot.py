@@ -8,7 +8,11 @@ import traceback
 
 import wordlist
 
+from pathlib import Path
+
+
 from chatgpt import CompletionApp
+from llm import LLMApp
 from twitch import TwitchApp
 from oauth import OAuthApp
 from tts import TTSApp
@@ -40,7 +44,14 @@ class ChatbotApp():
         self.last_interaction_time = 0
 
         self.load_history()
-        self.chatgpt = CompletionApp()
+        llm_backend = CONFIG.get("chatbot", "llm_backend", fallback="openai")
+        self.log.debug(llm_backend)
+        if llm_backend == "vllm":
+            self.log.info("Using VLLM for LLM backend")
+            self.llm = LLMApp()
+        else:
+            self.log.info("Using OpenAI for LLM backend")
+            self.llm = CompletionApp()
         self.macros = Macros()
 
         self.context = {
@@ -99,6 +110,14 @@ class ChatbotApp():
 
     def load_history(self):
         if self.history_path and os.path.exists(self.history_path):
+
+            # If the history_path file is over 4 hours old, consider it
+            # stale and just return
+            age = time.time() - os.path.getmtime(self.history_path)
+            if age > 4 * 60 * 60:
+                self.log.info("Not loading stale history over 4 hours old..")
+                return
+
             with open(self.history_path, "r") as fil:
                 history_data = fil.read()
                 self.history = json.loads(history_data)
@@ -220,11 +239,11 @@ class ChatbotApp():
     def is_voice_command(self, message):
         pattern = f"\\bHey,? (?:{self.nicknames}),? please (.+)\\b"
 
-        if not self.is_from_streamer(message):
+        result = re.search(pattern, message['text'], re.IGNORECASE) is not None
+
+        if result and not self.is_from_streamer(message):
             self.log.error(f"Ignoring command from {message['author']}")
             return False
-
-        result = re.search(pattern, message['text'], re.IGNORECASE) is not None
 
         return result
     
@@ -249,12 +268,23 @@ class ChatbotApp():
             self.process_when_i(message)
         elif re.search("find the last clip", cmd, re.IGNORECASE) is not None:
             self.process_find_last_clip(message)
-        elif re.search("(?:save|start|make) a clip", cmd, re.IGNORECASE) is not None:
+        elif re.search("(?:save|start|make) a (?:new )?clip", cmd, re.IGNORECASE) is not None:
             self.process_save_clip(message)
-        elif re.search("(?:edit|trip|cut) the clip", cmd, re.IGNORECASE) is not None:
+        elif re.search("(?:edit|trim|cut) (?:the|that) clip", cmd, re.IGNORECASE) is not None:
             self.process_edit_clip(message)
         elif re.search("post (?:the|that) clip", cmd, re.IGNORECASE) is not None:
             self.process_post_clip(message)
+        elif re.search("(?:share|slack|send) (?:the|that) clip", cmd, re.IGNORECASE) is not None:
+            self.process_share_clip(message)
+        elif re.search("(?:save|make|create|take|grab) a screenshot", cmd, re.IGNORECASE) is not None:
+            self.process_save_screenshot(message)
+        elif re.search("(?:share|slack|send) (?:the|that) screenshot", cmd, re.IGNORECASE) is not None:
+            self.process_share_screenshot(message)
+        elif re.search("(?:announce|share|post) (?:the|our|this) stream", cmd, re.IGNORECASE) is not None:
+            self.process_announce_stream(message)
+        elif re.search("(?:announce|share|post) that (?:we are|we're|i am|i'm) live", cmd, re.IGNORECASE) is not None:
+            self.process_announce_stream(message)
+
         else:
             self.log.error(f"Couldn't parse command: '{cmd}'")
             return self.reply({"type":"command", "prompt": "Reply to a command I don't understand."})
@@ -280,7 +310,7 @@ class ChatbotApp():
 
         if len(game) > 0:
             self.log.info(f"Changing game to '{game}'")
-            self.chatgpt.game = game
+            self.llm.game = game
             CONFIG.set("game", "name", game)
             self.say(f"[cmd] Okay I set the game to {game}.")
             # TODO Save config
@@ -320,7 +350,11 @@ class ChatbotApp():
 
     def process_save_clip(self, message):
         self.append_to_history(message)
-        clip = self.macros.exec_save_clip()
+
+        word1 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+        word2 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+
+        clip = self.macros.exec_save_clip(word1, word2)
 
         if clip is None:
             self.log.error("Failed to save clip")
@@ -332,6 +366,24 @@ class ChatbotApp():
             "type":"command", 
             "prompt": (f"Reply to saving a clip named {clip['filename']} "
                        f"that has a duration of {clip['duration']} seconds.")
+        })
+
+    def process_save_screenshot(self, message):
+        self.append_to_history(message)
+
+        word1 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+        word2 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+
+        shot = self.macros.exec_save_screenshot(word1, word2)
+
+        if shot is None:
+            self.log.error("Failed to save screenshot")
+            self.reply({ "type":"command", "prompt": "Reply to failed screenshot save."})
+            return
+        
+        self.reply({ 
+            "type":"command", 
+            "prompt": (f"Reply to saving a screenshot to {shot['url']}.")
         })
 
     def get_seconds_from_message(self, message):
@@ -364,7 +416,10 @@ class ChatbotApp():
             self.reply({ "type":"command", "prompt": "Reply to duration being longer than clip."})
             return
         
-        new_clip = self.macros.exec_trim_clip(clip, duration)
+        word1 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+        word2 = self.random_word_from_history(randint(2, 10)) or self.random_word()
+        new_clip = self.macros.exec_trim_clip(clip, word1, word2, duration)
+
         if new_clip is None:
             self.log.error("Failed to trim clip")
             self.reply({ "type":"command", "prompt": "Reply to failed clip trim."})
@@ -385,17 +440,51 @@ class ChatbotApp():
             self.reply({ "type":"command", "prompt": "Reply to not having a clip to post."})
             return
         
-        new_clip = self.macros.exec_post_clip(clip)
-        if new_clip is None:
-            self.log.error("Failed to post clip")
-            self.reply({ "type":"command", "prompt": "Reply to failed clip post."})
-            return
-
-        self.context['clip'] = new_clip
-
         self.reply({
             "type":"command",
-            "prompt": (f"Reply to posting the clip to {new_clip['url']}")
+            "prompt": (f"Reply to posting the clip to {clip['url']}")
+        })
+
+    def process_share_clip(self, message):
+        self.append_to_history(message)
+        
+        result = self.macros.exec_share("clip")
+
+        if result is None:
+            self.reply({ "type":"command", "prompt": "Reply to failed share."})
+            return
+        
+        self.reply({
+            "type":"command",
+            "prompt": (f"Reply to sharing the clip")
+        })
+
+    def process_share_screenshot(self, message):
+        self.append_to_history(message)
+        
+        result = self.macros.exec_share("shot")
+
+        if result is None:
+            self.reply({ "type":"command", "prompt": "Reply to failed share."})
+            return
+        
+        self.reply({
+            "type":"command",
+            "prompt": (f"Reply to sharing the screenshot")
+        })
+
+    def process_announce_stream(self, message):
+        self.append_to_history(message)
+        
+        result = self.macros.exec_announce()
+
+        if result is None:
+            self.reply({ "type":"command", "prompt": "Reply to failed announce."})
+            return
+        
+        self.reply({
+            "type":"command",
+            "prompt": (f"Reply to announcing the stream being live")
         })
 
     def process_when_i(self, message):
@@ -498,11 +587,32 @@ class ChatbotApp():
         if self.is_from_me(message):
             return False
         
-        pattern = f"\\b(hey|yes|yeah|no|nah|okay|thanks)?,?\\s*({self.nicknames})\\b"
+        prefixes = ("hey|yes|yeah|no|nah|okay|thanks|so"
+                    "|yo|hi|hello|morning|afternoon|evening")
+
+        pattern = f"\\b({prefixes}),?\\s*({self.nicknames})\\b"
         
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
     
         self.log.debug(f"is_activated={result}")
+
+        return result
+
+    def is_anti_activated(self, message):
+        if self.is_from_me(message):
+            return False
+    
+        ## Our friend, Bobby
+        ## You know who, Bobby
+        ## You know Bobby
+        ## Oh that Bobby
+        prefixes = ("friend|that|who|know")
+
+        pattern = f"\\b({prefixes}),?\\s*({self.nicknames})\\b"
+        
+        result = re.search(pattern, message['text'], re.IGNORECASE) is not None
+    
+        self.log.debug(f"is_anti_activated={result}")
 
         return result
 
@@ -566,7 +676,10 @@ class ChatbotApp():
     def should_reply_activation(self, message):
         result = False
 
-        if self.is_likely_spam(message):
+        if self.is_anti_activated(message):
+            return False
+
+        elif self.is_likely_spam(message):
             self.log.debug("Replying to likely spam")
             result = {
                 "type": "spam",
@@ -583,6 +696,7 @@ class ChatbotApp():
         elif self.is_activated(message):
             self.log.debug("Replying to activation")
 
+            # Say Hey Bobby I'm bored.
             if self.is_boredom_request(message):
                 result = {
                     "type": "boredom",
@@ -628,7 +742,8 @@ class ChatbotApp():
             self.log.debug(f"Found {words} in history")
 
             if len(words) == 0:
-                self.log.debug("No words found in history")
+                # If we didn't find words try going further back in history
+                self.log.debug("No words found in history, going back further..")
                 return self.random_word_from_history(offset+1)
         
             word_idx = randint(0, len(words)-1)
@@ -696,7 +811,7 @@ class ChatbotApp():
             self.tts.ack()
 
         self.log.info("Getting response")
-        response = self.chatgpt.get_response(self.history, context)
+        response = self.llm.get_response(self.history, context)
 
         self.log.info(f"Responding with '{response}'")
         self.say(response)
