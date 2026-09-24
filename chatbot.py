@@ -12,12 +12,8 @@ from pathlib import Path
 
 
 from chatgpt import CompletionApp
-from llm import LLMApp
-from twitch import TwitchApp
-from oauth import OAuthApp
 from tts import TTSApp
 from avatar import AvatarApp
-from webserver import WebserverApp
 
 from macros import Macros
 
@@ -26,32 +22,44 @@ from logs import Logger
 from eventbus import eventbus, Events
 
 class ChatbotApp():
-    token = None
-
-    def __init__(self):
-        self.log = Logger("chatbot")
+    def __init__(self, name=None, *, tts=None, webserver=None, twitch=None,
+                 oauth=None, all_names=None):
+        # The character key (e.g. "bobby") selects the [chatbot.<name>] config
+        # section and the avatar character to render/speak as.
+        self.character = name or re.split(
+            r"\s*,\s*", CONFIG.get("chatbot", "characters", fallback="bobby"))[0]
+        self.log = Logger(f"chatbot.{self.character}")
         self.history = []
 
-        self.name = CONFIG.get("chatbot", "name")
+        # Per-character config with fallback to the shared [chatbot] defaults.
+        def cfg(key, fallback=None):
+            return CONFIG.get(f"chatbot.{self.character}", key,
+                              fallback=CONFIG.get("chatbot", key, fallback=fallback))
+
+        # self.name is the bot's chat display name (e.g. "bobbychatbot"); it may
+        # differ from the character key and drives the CHAT_MESSAGE author and
+        # role attribution in CompletionApp.
+        self.name = cfg("name")
         self.streamer_name = CONFIG.get("streamer", "name")
         self.history_size = CONFIG.getint("chatbot", "history_size", fallback=100)
-        self.history_path = CONFIG.get("chatbot", "history_path", fallback=None)
-        self.nicknames = CONFIG.get("chatbot", "nicknames")
-        self.reply_mode = CONFIG.get("chatbot", "reply_mode", fallback="conversation")
+        self.history_path = cfg("history_path", None)
+        self.nicknames = cfg("nicknames")
+        self.reply_mode = cfg("reply_mode", "conversation")
         self.bang_pattern = CONFIG.get("bangs", "pattern", fallback=None)
+        self.prompt_template = cfg(
+            "prompt_template", CONFIG.get("openai.com", "prompt_template", fallback=None))
+        self.model = cfg("model", CONFIG.get("openai.com", "model", fallback="gpt-4o"))
+        self.boredom_mode = cfg("boredom_mode", "history_based")
+
+        # All known bot display names, so a character never replies to any bot.
+        self.all_names = set(all_names) if all_names else { self.name }
 
         self.last_message_time = 0
         self.last_interaction_time = 0
 
         self.load_history()
-        llm_backend = CONFIG.get("chatbot", "llm_backend", fallback="openai")
-        self.log.debug(llm_backend)
-        if llm_backend == "vllm":
-            self.log.info("Using VLLM for LLM backend")
-            self.llm = LLMApp()
-        else:
-            self.log.info("Using OpenAI for LLM backend")
-            self.llm = CompletionApp()
+        self.chatgpt = CompletionApp(
+            name=self.name, prompt_template=self.prompt_template, model=self.model)
         self.macros = Macros()
 
         self.context = {
@@ -59,54 +67,11 @@ class ChatbotApp():
             "time": None
         }
 
-        if CONFIG.getboolean("chatbot", "send_to_twitch", fallback=True):
-            self.oauth = OAuthApp(CONFIG.get("chatbot", "twitch_oauth_section"))
-            self.twitch = TwitchApp(self.name, self.streamer_name)
-        else:
-            self.oauth = None
-            self.twitch = None
-        
-        if CONFIG.getboolean("chatbot", "send_to_tts", fallback=False):
-            self.tts = TTSApp()
-        elif CONFIG.getboolean("chatbot", "send_to_avatar", fallback=False):
-            self.tts = AvatarApp()
-        else:
-            self.tts = None
-
-        if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
-            self.webserver = WebserverApp(on_copilot_message=self.on_copilot_message)
-
-        eventbus.create_subscriber(
-            name="chatbot", 
-            event_types=[Events.CHAT_MESSAGE, Events.STREAMER_PHRASE], 
-            callback=self.on_event
-        )
-
-
-    def ensure_connected(self):
-        if self.twitch:
-            if not self.twitch.running:
-                if self.token is None:
-                    self.log.info("Waiting for Chatbot Twitch token...")
-                    self.token = self.oauth.get_token()
-                else:
-                    self.log.info("Token received.  Starting Twitch Server..")
-                    self.twitch.start(self.token)        
-        
-        if self.tts and not self.tts.running:
-            self.log.info("Starting TTS Server..")
-            self.tts.start()
-
-        if self.webserver:
-            self.webserver.ensure_connected()
-
-    def shutdown(self):
-        if self.twitch:
-            self.twitch.shutdown()
-            self.oauth.shutdown()
-
-        if self.webserver:
-            self.webserver.shutdown()
+        # Shared resources are owned by ChatbotManager and injected here.
+        self.tts = tts
+        self.webserver = webserver
+        self.twitch = twitch
+        self.oauth = oauth
 
     def load_history(self):
         if self.history_path and os.path.exists(self.history_path):
@@ -148,13 +113,13 @@ class ChatbotApp():
 
         if self.is_activated(message):
             if self.tts:
-                self.tts.ack()
+                self.tts.ack(character=self.character)
 
     def on_copilot_message(self, text):
         self.log.debug(f"Got copilot message: {text}")
 
         if self.tts:
-            self.tts.ack()
+            self.tts.ack(character=self.character)
             
         message = { "author": self.streamer_name, "text": text, "sent": time.time() }
 
@@ -185,11 +150,7 @@ class ChatbotApp():
                 return
 
             # Record last message/interaction times
-            if self.is_from_me(message):
-                self.last_message_time = time.time()
-            
-            if not self.is_from_streamer(message):
-                self.last_interaction_time = time.time()
+            self.note_times(message)
 
             # Add to our history log
             self.append_to_history(message)
@@ -199,6 +160,8 @@ class ChatbotApp():
             
             if reply_context:
                 self.reply(reply_context)
+            elif self.avatar:
+                self.avatar.noack()
     
         except Exception as e:
             self.log.error("Caught exception in chatbot.on_message")
@@ -206,9 +169,19 @@ class ChatbotApp():
     
     def is_from_streamer(self, message):
         return message['author'] == self.streamer_name
-    
+
     def is_from_me(self, message):
         return message['author'] == self.name
+
+    def is_from_any_bot(self, message):
+        return message['author'] in self.all_names
+
+    def note_times(self, message):
+        if self.is_from_me(message):
+            self.last_message_time = time.time()
+
+        if not self.is_from_streamer(message):
+            self.last_interaction_time = time.time()
 
     def is_bang_command(self, message):
         if not self.bang_pattern:
@@ -310,7 +283,7 @@ class ChatbotApp():
 
         if len(game) > 0:
             self.log.info(f"Changing game to '{game}'")
-            self.llm.game = game
+            self.chatgpt.game = game
             CONFIG.set("game", "name", game)
             self.say(f"[cmd] Okay I set the game to {game}.")
             # TODO Save config
@@ -505,9 +478,9 @@ class ChatbotApp():
             self.context['time'] = time_context
 
     def is_talking_to_me(self, message):
-        if self.is_from_me(message):
+        if self.is_from_any_bot(message):
             return False
-        
+
         pattern = f"\\b({self.nicknames}|you|your|our)\\b"
 
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
@@ -584,13 +557,13 @@ class ChatbotApp():
         return result
 
     def is_activated(self, message):
-        if self.is_from_me(message):
+        if self.is_from_any_bot(message):
             return False
         
         prefixes = ("hey|yes|yeah|no|nah|okay|thanks|so"
                     "|yo|hi|hello|morning|afternoon|evening")
 
-        pattern = f"\\b({prefixes}),?\\s*({self.nicknames})\\b"
+        pattern = f"\\b({prefixes})?,?\\s*({self.nicknames})\\b"
         
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
     
@@ -637,9 +610,9 @@ class ChatbotApp():
         return result
 
     def is_discussion_continued(self, message):
-        if self.is_from_me(message):
+        if self.is_from_any_bot(message):
             return False
-        
+
         return (
             self.is_talking_to_me(message) and
             self.time_since_last_message_or_tts() < 15 and
@@ -654,7 +627,7 @@ class ChatbotApp():
         return result
     
     def is_likely_spam(self, message):
-        if self.is_from_me(message) or self.is_from_streamer(message):
+        if self.is_from_any_bot(message) or self.is_from_streamer(message):
             return False
 
         matches = 0
@@ -690,6 +663,7 @@ class ChatbotApp():
             self.log.debug("Replying to continued discussion")
             result = {
                 "type": "discussion",
+                "character": "last",  # Use the last character that was activated (if multiple messages are coming in, we don't want to switch characters in the middle of a conversation)
                 "prompt": "Reply a continued converation."
             }
 
@@ -760,6 +734,17 @@ class ChatbotApp():
         return words[word_idx]
     
     def reply_boredom_ideas(self):
+        if self.boredom_mode == "history_based":
+            return self.reply_boredom_ideas_history_based()
+        elif self.boredom_mode == "grumpy":
+            return self.reply_boredom_ideas_grumpy()
+
+    def reply_boredom_ideas_grumpy(self):
+        return (f"Reply with a grumpy comment about something "
+                f"{self.streamer_name} just said or did."
+                f"Keep the reply short, under 20 words.")
+
+    def reply_boredom_ideas_history_based(self):
         subject = self.random_word_from_history() or self.random_word()
         idea = self.random_word(["a joke","a story","an anecdote","a fact", "a quote", "an idea"])
         starter = self.random_word([
@@ -799,6 +784,11 @@ class ChatbotApp():
         else:
             return self.should_reply_legacy(message)
 
+    # Whether this character was directly addressed (used by ChatbotManager to
+    # give an addressed character priority over ambient/boredom replies).
+    def is_addressed(self, message):
+        return self.is_activated(message) or self.is_talking_to_me(message)
+
     def is_code_response(self, response):
         return re.search("```", response) is not None
     
@@ -808,10 +798,10 @@ class ChatbotApp():
     def reply(self, context):
         # Make sure we're in ack mode if we're using TTS
         if self.tts and context['type'] != "boredom":
-            self.tts.ack()
+            self.tts.ack(character=self.character)
 
         self.log.info("Getting response")
-        response = self.llm.get_response(self.history, context)
+        response = self.chatgpt.get_response(self.history, context)
 
         self.log.info(f"Responding with '{response}'")
         self.say(response)
@@ -834,37 +824,29 @@ class ChatbotApp():
             if self.is_empty_response(message):
                 message = "sure, take a look at this."
             
-        # If we're sending to twitch, we don't need to call on_say since the
-        # message will come back through restream
+        # If we're sending to twitch, we don't need to publish the message since
+        # it will come back through restream; otherwise publish it on the bus so
+        # the other characters (and any listeners) see what this one said.
         if self.twitch:
             self.twitch.say(message)
-        elif self.on_say:
+        else:
             msg = {
                 "author": self.name,
                 "text": message,
                 "sent": time.time()
             }
-            #self.on_say(msg)
             eventbus.publish(Events.CHAT_MESSAGE, data=msg, source="chatbot")
-        
+
         if self.tts:
-            self.tts.say(message)
-        
+            self.tts.say(message, character=self.character)
+
         self.last_interaction_time = time.time()
         self.last_message_time = time.time()
 
-    def tick(self):
-        self.tts.tick()
-
 def run_tests():
-    data = {
-        'bot_name': "testbot",
-        'streamer_name': "testttv",
-        'game': 'Test'
-    }
-
-    chatbot = ChatbotApp(data)
+    chatbot = ChatbotApp()
     chatbot.name = "testbot"
+    chatbot.all_names = { "testbot" }
 
     t = time.time()
     chatbot.nicknames = "bot|robot|chat|bob|bobby"
@@ -903,8 +885,16 @@ def run_tests():
 def run_interactive():
     print("Starting interactive mode.  Chat with the bot at the prompt.")
 
-    chatbot = ChatbotApp()
-    chatbot.tts.start()
+    if CONFIG.getboolean("chatbot", "send_to_tts", fallback=False):
+        tts = TTSApp()
+    elif CONFIG.getboolean("chatbot", "send_to_avatar", fallback=False):
+        tts = AvatarApp()
+    else:
+        tts = None
+
+    chatbot = ChatbotApp(tts=tts)
+    if tts:
+        tts.start()
 
     class MockTwitch:
         def say(self, message):

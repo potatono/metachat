@@ -23,7 +23,6 @@ class RestreamApp():
         data = json.loads(rs_msg)
         action = data['action']
 
-        self.log.info(action)
         if action == "event":
             payload = data['payload']['eventPayload']
             author = payload['author']['displayName']
@@ -48,7 +47,7 @@ class RestreamApp():
     def start(self, token):
         self.log.info("Starting WS thread")
         self.running = True
-        websocket.enableTrace = True
+        websocket.enableTrace = False
         url = CONFIG.get("restream.io", "chat_ws_url", vars={ "access_token": token })
         self.wsa = websocket.WebSocketApp(url, on_message=lambda _, message: self.on_message(message))
         

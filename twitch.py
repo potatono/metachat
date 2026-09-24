@@ -9,6 +9,8 @@ import requests
 from config import *
 from logs import *
 
+from queue import Queue
+
 ''' WebSocket App for communicating with Twitch '''
 class TwitchApp():
     app = None
@@ -16,25 +18,34 @@ class TwitchApp():
     thread = None
     running = False
 
-    def __init__(self, name, channel):
+    def __init__(self, name, channel, user_id=None):
         self.log = Logger(f"twitch {name}")
         self.name = name
         self.channel = channel
 
-
         self.send_method = CONFIG.get("twitch.tv", "send_method", fallback="ws")
+        self.thread = Thread(daemon=True, target=self.loop)
+
 
         if self.send_method == "ws":
             self.ws_url = CONFIG.get("twitch.tv", "chat_ws_url", fallback=None)
-            self.thread = Thread(daemon=True, target=self.loop)        
         else:
-            self.client_id = CONFIG.get("twitch.tv", "client_id", fallback=None)        
+            self.client_id = CONFIG.get("twitch.tv", "client_id", fallback=None)
             self.api_url = CONFIG.get("twitch.tv", "chat_api_url", fallback=None)
             self.broadcaster_id = CONFIG.getint("twitch.tv", "broadcaster_id", fallback=None)
+            # The sending bot's user id; per-character so each character can post
+            # to chat under its own Twitch account. Falls back to the shared one.
             if name == channel:
                 self.user_id = self.broadcaster_id
             else:
-                self.user_id = CONFIG.getint("twitch.tv", "user_id", fallback=None)
+                # The sending bot's user id; per-character so each character can post
+                # to chat under its own Twitch account. Falls back to the shared one.
+                self.user_id = user_id if user_id is not None else CONFIG.getint("twitch.tv", "user_id", fallback=None)
+
+            self.last_api_send = None
+            self.api_send_queue = []
+            self.api_send_rate = CONFIG.getfloat("twitch.tv", "api_send_rate", fallback=1.0)
+            self.send_queue = Queue()
 
     def on_ws_message(self, ws, message):
         self.log.info(message)
@@ -59,7 +70,26 @@ class TwitchApp():
         self.log.info(f"Sending '{message}'")
         self.wsa.send(message)
 
+    def exeeds_api_send_rate(self):
+        if self.last_api_send is None:
+            return False
+
+        elapsed = time.time() - self.last_api_send
+        return elapsed < self.api_send_rate
+
+    def process_send_queue(self):
+        if not self.send_queue.empty():
+            if not self.exeeds_api_send_rate():
+                message = self.send_queue.get()
+                self.log.debug(f"Processing send queue message")
+                self.api_send(message)
+
     def api_send(self, message, attempt=1):
+        if self.exeeds_api_send_rate():
+            self.log.debug(f"API send rate exceeded, adding to send queue..")
+            self.send_queue.put(message)
+            return
+
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Client-Id": self.client_id
@@ -72,7 +102,9 @@ class TwitchApp():
 
         self.log.debug(f"Sending via API call to {self.api_url}: {data}")
 
+        self.last_api_send = time.time()
         resp = requests.post(self.api_url, headers=headers, json=data)
+
         if (resp.status_code == 200):
             self.log.debug("Message sent successfully")
         else:
@@ -100,7 +132,13 @@ class TwitchApp():
         self.log.info(f"Starting WS run_forever")
 
         try:
-            self.wsa.run_forever()
+            if self.send_method == "ws":
+                self.wsa.run_forever()
+            else:
+                while self.running:
+                    sleep(1)
+                    self.process_send_queue()
+            
         except Exception as ex:
             self.log.error("Exception in Twitch", exc_info=ex)
 
@@ -108,8 +146,6 @@ class TwitchApp():
         self.token = token
         self.running = True
 
-        ## If we're using the websockets irc method to send then we need to 
-        ## connect and run in a thread
         if self.send_method == "ws":
             self.log.info(f"Starting WS thread") 
             websocket.enableTrace = True        
@@ -122,7 +158,9 @@ class TwitchApp():
         
             self.thread.start()
         else:
-            self.log.info("Using API sends, no thread needed.")
+            self.log.info("Using API sends, no websocket needed.")
+            self.thread.start()
+
 
     def shutdown(self):
         if not self.running:
@@ -134,5 +172,7 @@ class TwitchApp():
 
         if self.send_method == "ws":
             self.wsa.close()
-            self.thread.join()
+
+        self.thread.join()
+
 

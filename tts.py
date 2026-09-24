@@ -23,12 +23,16 @@ class TTSApp():
         self.running = True
         self.thread.start()
 
-    def say(self, text):
+    def say(self, text, character="bobby"):
         self.log.info(f"Appending {text}")
         self.queue.append(text)
 
-    def ack(self):
+    def ack(self, character="bobby"):
         ## TODO Play a wav file
+        pass
+
+    def noack(self):
+        ## Keeping signature same as avatar
         pass
 
     def tick(self):
