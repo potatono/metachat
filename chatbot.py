@@ -49,6 +49,7 @@ class ChatbotApp():
         self.prompt_template = cfg(
             "prompt_template", CONFIG.get("openai.com", "prompt_template", fallback=None))
         self.model = cfg("model", CONFIG.get("openai.com", "model", fallback="gpt-4o"))
+        self.boredom_mode = cfg("boredom_mode", "history_based")
 
         # All known bot display names, so a character never replies to any bot.
         self.all_names = set(all_names) if all_names else { self.name }
@@ -159,6 +160,8 @@ class ChatbotApp():
             
             if reply_context:
                 self.reply(reply_context)
+            elif self.avatar:
+                self.avatar.noack()
     
         except Exception as e:
             self.log.error("Caught exception in chatbot.on_message")
@@ -560,7 +563,7 @@ class ChatbotApp():
         prefixes = ("hey|yes|yeah|no|nah|okay|thanks|so"
                     "|yo|hi|hello|morning|afternoon|evening")
 
-        pattern = f"\\b({prefixes}),?\\s*({self.nicknames})\\b"
+        pattern = f"\\b({prefixes})?,?\\s*({self.nicknames})\\b"
         
         result = re.search(pattern, message['text'], re.IGNORECASE) is not None
     
@@ -660,6 +663,7 @@ class ChatbotApp():
             self.log.debug("Replying to continued discussion")
             result = {
                 "type": "discussion",
+                "character": "last",  # Use the last character that was activated (if multiple messages are coming in, we don't want to switch characters in the middle of a conversation)
                 "prompt": "Reply a continued converation."
             }
 
@@ -730,6 +734,17 @@ class ChatbotApp():
         return words[word_idx]
     
     def reply_boredom_ideas(self):
+        if self.boredom_mode == "history_based":
+            return self.reply_boredom_ideas_history_based()
+        elif self.boredom_mode == "grumpy":
+            return self.reply_boredom_ideas_grumpy()
+
+    def reply_boredom_ideas_grumpy(self):
+        return (f"Reply with a grumpy comment about something "
+                f"{self.streamer_name} just said or did."
+                f"Keep the reply short, under 20 words.")
+
+    def reply_boredom_ideas_history_based(self):
         subject = self.random_word_from_history() or self.random_word()
         idea = self.random_word(["a joke","a story","an anecdote","a fact", "a quote", "an idea"])
         starter = self.random_word([

@@ -29,7 +29,9 @@ class Macros:
         self.clip_public_prefix = CONFIG.get("macros", "clip_public_prefix")
         self.clip_public_url_prefix = CONFIG.get("macros", "clip_public_url_prefix")
         self.brb_playpause_enabled = CONFIG.getboolean("macros", "brb_playpause_enabled", fallback=True)
-        self.webhook_url = SECRETS.get("macros", "webhook_url", fallback=None)
+        self.webhook_urls = SECRETS.get("macros", "webhook_urls", fallback=None)
+        if self.webhook_urls:
+            self.webhook_urls = [url.strip() for url in self.webhook_urls.split(",")]
         
         self.context_clip = None
         self.context_time = None
@@ -250,7 +252,7 @@ class Macros:
             self.log.error(f"Attempted to share {item} with no {item} in context.")
             return None
         
-        if not self.webhook_url:
+        if not self.webhook_urls:
             self.log.error(f"Attempted to share {item} with no webhook url defined.")
             return None
         
@@ -266,12 +268,13 @@ class Macros:
             self.log.error(f"Attempted to share a {item} but streamer name not set")
             return None
 
-        requests.post(self.webhook_url, json={"text":f"{streamer_name} shared this {item}: {url}"})
+        for webhook_url in self.webhook_urls:
+            requests.post(webhook_url, json={"text":f"{streamer_name} shared this {item}: {url}"})
 
         return True
 
     def exec_announce(self):       
-        if not self.webhook_url:
+        if not self.webhook_urls:
             self.log.error(f"Attempted to announce with no webhook url defined.")
             return None
                 
@@ -289,7 +292,8 @@ class Macros:
                 "*  https://www.facebook.com/potateohno\n"
                 "*  https://x.com/potatono\n")
 
-        requests.post(self.webhook_url, json={"text":msg})
+        for webhook_url in self.webhook_urls:
+            requests.post(webhook_url, json={"text":msg})
 
         return True
 

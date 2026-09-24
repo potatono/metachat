@@ -88,6 +88,8 @@ class ChatbotManager():
         # The character that fields copilot/code requests (first by config order).
         self.code_character = self.ordered[0]
 
+        self.last_addressed = None
+    
         eventbus.create_subscriber(
             name="chatbot",
             event_types=[Events.CHAT_MESSAGE, Events.STREAMER_PHRASE],
@@ -192,6 +194,10 @@ class ChatbotManager():
             addressed = []
             ambient = []
             for ch in self.ordered:
+                # Should reply will return a string containing context to
+                # pass into the LLM.  We also want to hold onto the last
+                # known character in case multiple should_replies come back
+                # true (as in we're continuing a conversation)
                 context = ch.should_reply(message)
                 if context:
                     if ch.is_addressed(message):
@@ -200,15 +206,24 @@ class ChatbotManager():
                         ambient.append((ch, context))
 
             if addressed:
-                # Directly-addressed character wins (config order breaks ties).
-                winner, context = addressed[0]
+                # If multiple characters are addressed, the use the last one if
+                # last_addressed is set.  Otherwise go with the first one.
+                if len(addressed) > 1 and self.last_addressed:
+                    winner, context = self.last_addressed
+                else:
+                    winner, context = addressed[0]                
             elif ambient:
                 # Ambient/boredom/spam: pick one so both get airtime over time.
                 winner, context = random.choice(ambient)
             else:
+                # No one wants to reply.  Make sure we're not in an ack state
+                if self.tts:
+                    self.tts.noack()
+                
                 return
 
             winner.reply(context)
+            self.last_addressed = (winner, context)
 
         except Exception:
             self.log.error("Caught exception in ChatbotManager.on_message")

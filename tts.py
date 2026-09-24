@@ -31,6 +31,10 @@ class TTSApp():
         ## TODO Play a wav file
         pass
 
+    def noack(self):
+        ## Keeping signature same as avatar
+        pass
+
     def tick(self):
         # Used in Avatar to run on the main loop.
         pass

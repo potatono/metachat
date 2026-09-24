@@ -48,6 +48,8 @@ class Character():
         self.ack_sound = None
         self.tts = None
 
+
+
     def init_images(self):
         path = f"avatar/{self.name}"
 
@@ -145,6 +147,13 @@ class AvatarApp():
         self.is_ack = False
 
         self.queue.append((character, text))
+
+    def noack(self):
+        if self.is_ack:
+            self.log.debug("Revoking ack for a non reply")
+            self.is_ack = False
+            self.update_obs()
+            self.update_title()
 
     def ack(self, character="bobby"):
         if self.is_ack:
@@ -282,6 +291,11 @@ class AvatarApp():
                 self.viseme_changed = True
                 break
 
+
+        ## Before we strip all high unicode chars, let's convert
+        ## any appostrophe like characters to the ascii version
+        text = re.sub(r"[\U00002018\U00002019\U000000B4`]", "'", text, re.A)
+        
         ## Strip any remaining emojis or other high unicode chars
         text = re.sub(r'[^\x00-\x7F]+','', text)
 
