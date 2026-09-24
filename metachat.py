@@ -10,6 +10,7 @@ from chat import ChatApp
 from streamer import StreamerApp
 from chatbot_manager import ChatbotManager
 from reactions import ReactionsApp
+from coder_bridge import CoderBridgeApp
 
 from config import CONFIG
 from logs import Logger
@@ -29,6 +30,7 @@ class Application():
         self.streamer = None
         self.chatbot = None
         self.reactions = None
+        self.coder = None
         self.queue = Queue()
         
         # Curses state
@@ -49,6 +51,7 @@ class Application():
         self.streamer = StreamerApp()
         self.chatbot = ChatbotManager()
         self.reactions = ReactionsApp()
+        self.coder = CoderBridgeApp(chatbot_manager=self.chatbot, streamer=self.streamer)
 
     def start(self):
         """Start the application with curses wrapper"""
@@ -97,6 +100,8 @@ class Application():
             self.chatbot.ensure_connected()
         if self.reactions:
             self.reactions.ensure_connected()
+        if self.coder:
+            self.coder.ensure_connected()
 
     def shutdown(self):
         if self.chat:
@@ -107,6 +112,8 @@ class Application():
             self.chatbot.shutdown()
         if self.reactions:
             self.reactions.shutdown()
+        if self.coder:
+            self.coder.shutdown()
 
     def tick(self):
         if self.chatbot:

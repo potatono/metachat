@@ -12,6 +12,7 @@ from webserver import WebserverApp
 from config import CONFIG
 from logs import Logger
 from eventbus import eventbus, Events
+from util import pick_winner
 
 
 ''' Coordinates one ChatbotApp per character.
@@ -42,9 +43,15 @@ class ChatbotManager():
         elif CONFIG.getboolean("chatbot", "send_to_avatar", fallback=False):
             self.tts = AvatarApp()
 
+        # The HTTP static server (serves public/, including the review page).
+        # The legacy copilot WebSocket + LLM path only exists when
+        # enable_copilot_server is on; without it the webserver is HTTP-only.
         self.webserver = None
-        if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
-            self.webserver = WebserverApp(on_copilot_message=self.on_copilot_message)
+        if CONFIG.getboolean("webserver", "enable", fallback=True):
+            on_copilot = None
+            if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
+                on_copilot = self.on_copilot_message
+            self.webserver = WebserverApp(on_copilot_message=on_copilot)
 
         # One Twitch token per oauth section (the handshake happens lazily in
         # ensure_connected; multiple characters never share an oauth section,
@@ -85,14 +92,28 @@ class ChatbotManager():
         # Characters in config order, for deterministic arbitration.
         self.ordered = [self.chatbots[n] for n in self.names]
 
-        # The character that fields copilot/code requests (first by config order).
-        self.code_character = self.ordered[0]
+        # The character that fields copilot/code requests.
+        code_name = CONFIG.get("chatbot", "code_character", fallback=self.names[0])
+        if code_name in self.chatbots:
+            self.code_character = self.chatbots[code_name]
+        else:
+            self.log.warning(f"Unknown code_character '{code_name}', using {self.names[0]}")
+            self.code_character = self.ordered[0]
 
         self.last_addressed = None
-    
+
+        # Characters (by config key) excluded from LLM replies, acks, and
+        # voice commands.  The coder bridge suppresses the code character
+        # while a remote session is connected; bookkeeping (history/times)
+        # keeps running so the character stays current.
+        self.suppressed = set()
+
+        # Last seen coder mode, for reacting only to transitions.
+        self.last_coder_mode = None
+
         eventbus.create_subscriber(
             name="chatbot",
-            event_types=[Events.CHAT_MESSAGE, Events.STREAMER_PHRASE],
+            event_types=[Events.CHAT_MESSAGE, Events.STREAMER_PHRASE, Events.CODER_STATE],
             callback=self.on_event,
         )
 
@@ -134,24 +155,73 @@ class ChatbotManager():
         if self.tts:
             self.tts.tick()
 
+    # --- Suppression (used by the coder bridge) ---
+
+    def suppress(self, character):
+        self.log.info(f"Suppressing {character} replies")
+        self.suppressed.add(character)
+
+    def unsuppress(self, character):
+        self.log.info(f"Restoring {character} replies")
+        self.suppressed.discard(character)
+
     # --- Event handling ---
 
     def on_event(self, event):
         if event.type == Events.CHAT_MESSAGE:
-            self.on_message(event.data)
+            # Carry the eventbus source into the message so identity checks
+            # (is_from_streamer) can distinguish mic/keyboard from chat relays.
+            message = dict(event.data)
+            message.setdefault("source", event.source)
+            self.on_message(message)
         elif event.type == Events.STREAMER_PHRASE:
-            self.on_voice(event.data)
+            self.on_voice(event.data, event.source)
+        elif event.type == Events.CODER_STATE:
+            self.on_coder_state(event.data)
 
-    def on_voice(self, text):
+    def on_voice(self, text, source=None):
         self.log.debug(f"Got voice: {text}")
-        message = { "author": self.streamer_name, "text": text }
+        message = { "author": self.streamer_name, "text": text, "source": source }
 
         # Ack with whichever character was addressed (only one).
         for ch in self.ordered:
+            if ch.character in self.suppressed:
+                continue
             if ch.is_activated(message):
                 if self.tts:
                     self.tts.ack(character=ch.character)
                 break
+
+    def on_coder_state(self, state):
+        """Occasionally have another character quip when the pairing session
+        hits a milestone (mode change)."""
+        mode = state.get("mode")
+        if not mode or mode == self.last_coder_mode:
+            return
+        previous, self.last_coder_mode = self.last_coder_mode, mode
+        if previous is None:
+            return
+
+        chance = CONFIG.getfloat("coder", "reaction_chance", fallback=0.0)
+        if random.random() > chance:
+            return
+
+        candidates = [ch for ch in self.ordered
+                      if ch is not self.code_character
+                      and ch.character not in self.suppressed]
+        if not candidates:
+            return
+
+        coder = self.code_character.character
+        prompts = {
+            "plan": f"Reply with a short quip about {coder} being roped into pair programming",
+            "implement": f"Reply with a short quip about {coder} starting to write code",
+            "review": f"Reply with a short quip about {coder}'s code getting reviewed on stream",
+            "idle": f"Reply with a short quip about {coder} being done coding for now",
+        }
+        prompt = prompts.get(mode)
+        if prompt:
+            random.choice(candidates).reply({"type": "command", "prompt": prompt})
 
     def on_copilot_message(self, text):
         self.code_character.on_copilot_message(text)
@@ -176,6 +246,8 @@ class ChatbotManager():
                 # Voice commands ("Hey <nick> please ...") are addressed by
                 # nickname; the matching character handles them.
                 for ch in self.ordered:
+                    if ch.character in self.suppressed:
+                        continue
                     if ch.is_voice_command(message):
                         ch.process_voice_command(message)
                         return
@@ -194,6 +266,8 @@ class ChatbotManager():
             addressed = []
             ambient = []
             for ch in self.ordered:
+                if ch.character in self.suppressed:
+                    continue
                 # Should reply will return a string containing context to
                 # pass into the LLM.  We also want to hold onto the last
                 # known character in case multiple should_replies come back
@@ -206,12 +280,9 @@ class ChatbotManager():
                         ambient.append((ch, context))
 
             if addressed:
-                # If multiple characters are addressed, the use the last one if
-                # last_addressed is set.  Otherwise go with the first one.
-                if len(addressed) > 1 and self.last_addressed:
-                    winner, context = self.last_addressed
-                else:
-                    winner, context = addressed[0]                
+                # If multiple characters are addressed, prefer the previous
+                # winner (if it's addressed again) with the current context.
+                winner, context = pick_winner(addressed, self.last_addressed)
             elif ambient:
                 # Ambient/boredom/spam: pick one so both get airtime over time.
                 winner, context = random.choice(ambient)

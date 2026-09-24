@@ -1,0 +1,17 @@
+{
+  "name": "metachat-channel",
+  "version": "0.1.0",
+  "description": "Claude Code channel server bridging a session to metachat's coder bridge",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "fake-bridge": "bun run proto/fake_bridge.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}

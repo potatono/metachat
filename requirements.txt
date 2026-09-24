@@ -12,3 +12,4 @@ websockets
 number_parser
 windows-curses; sys_platform == "win32"
 voicemeeter-api; sys_platform == "win32"
+pytest

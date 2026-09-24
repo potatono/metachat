@@ -27,7 +27,7 @@ class EventBus:
     def __init__(self):
         if hasattr(self, '_initialized'):
             return
-        self.initialized = True
+        self._initialized = True
         
         # Per-subscriber event queues
         self.queues = {}
@@ -157,6 +157,12 @@ class Events:
     USER_INPUT = "user_input"
     STREAMER_LINE = "streamer_line"
     STREAMER_PHRASE = "streamer_phrase"
+    # First STT partial after silence: the earliest "streamer started
+    # speaking" signal, used for barge-in.
+    STREAMER_PARTIAL = "streamer_partial"
+    # Published by the coder bridge whenever the remote pairing session
+    # changes state (mode/chunk), so other characters can react.
+    CODER_STATE = "coder_state"
     CHATBOT_RESPONSE = "chatbot_response"
     CONNECTION_STATUS = "connection_status"
     APPLICATION_SHUTDOWN = "application_shutdown"

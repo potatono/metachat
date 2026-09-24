@@ -168,7 +168,23 @@ class ChatbotApp():
             self.log.error(traceback.format_exc())
     
     def is_from_streamer(self, message):
-        return message['author'] == self.streamer_name
+        if message['author'] != self.streamer_name:
+            return False
+
+        # Mic and keyboard input can only come from the streamer's machine.
+        source = message.get('source')
+        if source in ("microphone", "keyboard"):
+            return True
+
+        # Restream merges chat from every platform by display name, which
+        # anyone can spoof.  When trusted_connection is set, only accept the
+        # streamer's messages from that platform/connection id.
+        trusted = CONFIG.get("chatbot", "trusted_connection", fallback=None)
+        if trusted:
+            return (str(message.get('platform')) == trusted
+                    or str(message.get('connection')) == trusted)
+
+        return True
 
     def is_from_me(self, message):
         return message['author'] == self.name

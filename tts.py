@@ -31,6 +31,11 @@ class TTSApp():
         ## TODO Play a wav file
         pass
 
+    def stop(self, character=None):
+        # Same interface as AvatarApp.stop; pyttsx3 can't interrupt an
+        # in-progress line, but pending ones are dropped.
+        self.queue.clear()
+
     def noack(self):
         ## Keeping signature same as avatar
         pass

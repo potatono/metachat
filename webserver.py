@@ -37,10 +37,12 @@ class WebserverApp:
 
             def do(this, method, data=None):
                 try:
-                    
-                    response = self.handle_webserver_request(method, this.path, data)
+                    # Strip any query string; routing and static lookup use
+                    # the bare path (pages read query params client-side).
+                    path = urllib.parse.urlparse(this.path).path
+                    response = self.handle_webserver_request(method, path, data)
                     if response:
-                        mime_type, _ = mimetypes.guess_type(this.path)
+                        mime_type, _ = mimetypes.guess_type(path)
 
                         if type(response) is dict:
                             this.respond(json.dumps(response).encode(), 'application/json')
@@ -64,13 +66,19 @@ class WebserverApp:
 
         self.webserver = http.server.ThreadingHTTPServer((self.address, self.port), RequestHandler)
         self.webthread = threading.Thread(target=self.run_webserver)
-        self.wbsthread = threading.Thread(target=self.run_wbsserver)
+
+        # The copilot WebSocket only runs when a message handler was given;
+        # otherwise this is a plain HTTP static server.
+        self.wbsthread = None
+        if self.on_copilot_message:
+            self.wbsthread = threading.Thread(target=self.run_wbsserver)
 
     def ensure_connected(self):
         if not self.running:
             self.running = True
             self.webthread.start()
-            self.wbsthread.start()
+            if self.wbsthread:
+                self.wbsthread.start()
 
     def shutdown(self):
         if self.running:
@@ -79,14 +87,15 @@ class WebserverApp:
             self.webserver.shutdown()
             self.webthread.join()
 
-            self.log.info("Shutting down WebSocket server...")
+            if self.wbsthread:
+                self.log.info("Shutting down WebSocket server...")
 
-            # Make a copy so when we close the sockets, we don't modify the set
-            websockets = self.websockets.copy()
-            for socket in websockets:
-                socket.close()
-            self.wbsserver.shutdown()
-            self.wbsthread.join()
+                # Make a copy so when we close the sockets, we don't modify the set
+                websockets = self.websockets.copy()
+                for socket in websockets:
+                    socket.close()
+                self.wbsserver.shutdown()
+                self.wbsthread.join()
 
     def run_webserver(self):
         self.log.info(f"Starting web server on {self.address}:{self.port}...")
@@ -133,6 +142,10 @@ class WebserverApp:
         return query_params
 
     def handle_get_path(self, path):
+        # Serve index.html for directories (e.g. /review/).
+        if os.path.isdir(self.get_absolute_path(path)):
+            path = path.rstrip("/") + "/index.html"
+
         mimetype, _ = mimetypes.guess_type(path)
         mode = "r" if mimetype and mimetype.startswith("text/") else "rb"
 

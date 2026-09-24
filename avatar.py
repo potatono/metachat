@@ -2,7 +2,7 @@ import time
 import json
 import re
 from random import random, randint
-from threading import Thread
+from threading import Thread, Lock
 
 import azure.cognitiveservices.speech as speechsdk
 import pygame
@@ -11,6 +11,7 @@ from pygame.locals import *
 from config import *
 from logs import *
 from obs import ObsApp
+from util import apply_corrections
 
 class Character():
     def __init__(self, name, speech_key, speech_region):
@@ -65,7 +66,7 @@ class Character():
     def init_sound(self):
         self.ack_sound = pygame.mixer.Sound(f"avatar/{self.name}/ack.wav")
 
-    def init_tts(self, on_viseme, on_completed):
+    def init_tts(self, on_viseme, on_completed, on_canceled):
         speech_config = speechsdk.SpeechConfig(subscription=self.speech_key,
                                                region=self.speech_region)
         audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
@@ -75,12 +76,18 @@ class Character():
                                                audio_config=audio_config)
         self.tts.viseme_received.connect(on_viseme)
         self.tts.synthesis_completed.connect(on_completed)
+        # A stopped synthesis fires canceled instead of completed; without
+        # this handler is_talking would stay True forever after a barge-in.
+        self.tts.synthesis_canceled.connect(on_canceled)
 
 
 class AvatarApp():
     #thread = None
     running = False
     queue = []
+    # say() runs on eventbus callback threads while process_tts runs on the
+    # main loop, so all queue mutations go through this lock.
+    queue_lock = Lock()
     last_completion = None
     is_talking = False
     future = None
@@ -146,7 +153,25 @@ class AvatarApp():
         self.log.info(f"Appending {text}")
         self.is_ack = False
 
-        self.queue.append((character, text))
+        with self.queue_lock:
+            self.queue.append((character, text))
+
+    def stop(self, character=None):
+        """Stop speaking: clear the character's queued lines (all characters
+        if None) and interrupt any in-progress synthesis for it."""
+        with self.queue_lock:
+            if character:
+                self.queue[:] = [q for q in self.queue if q[0] != character]
+            else:
+                self.queue.clear()
+
+        if self.is_talking and (character is None or self.current.name == character):
+            self.log.info(f"Stopping speech for {self.current.name}")
+            try:
+                # on_canceled resets is_talking and the avatar state.
+                self.current.tts.stop_speaking_async().get()
+            except Exception as ex:
+                self.log.error("Error stopping TTS", exc_info=ex)
 
     def noack(self):
         if self.is_ack:
@@ -200,13 +225,10 @@ class AvatarApp():
             self.corrections.append(part.split(':'))
 
     def apply_corrections(self, text):
-        for (bad, good) in self.corrections:
-            text = re.sub(f"\\b{bad}\\b", good, text, re.IGNORECASE | re.A)
-        
-        return text
+        return apply_corrections(text, self.corrections, flags=re.IGNORECASE | re.A)
 
     def apply_nonword_filter(self, text):
-        text = re.sub("[^\w,\.!\s\']", "", text, re.A)
+        text = re.sub(r"[^\w,\.!\s\']", "", text, flags=re.A)
 
         return text
 
@@ -238,6 +260,20 @@ class AvatarApp():
         self.update_obs()
         self.update_title()
         self.future.get()
+
+    def on_canceled(self, evt):
+        # Fires instead of on_completed when synthesis is stopped (barge-in)
+        # or fails.  last_completion still updates so discussion continuation
+        # keeps working after an interruption.
+        self.log.info("TTS canceled")
+        self.last_completion = time.time()
+        self.is_talking = False
+        self.scale = 1.0
+        self.angle = 0.0
+        self.viseme_id = 0
+        self.viseme_changed = True
+        self.update_obs()
+        self.update_title()
 
     def blit_viseme(self):
         character = self.current
@@ -274,7 +310,7 @@ class AvatarApp():
 
     def init_tts(self):
         for character in self.characters.values():
-            character.init_tts(self.on_viseme, self.on_completed)
+            character.init_tts(self.on_viseme, self.on_completed, self.on_canceled)
 
     # This strips out emojis from the text, but uses them
     # to adjust the eyes to show emotion state
@@ -294,7 +330,7 @@ class AvatarApp():
 
         ## Before we strip all high unicode chars, let's convert
         ## any appostrophe like characters to the ascii version
-        text = re.sub(r"[\U00002018\U00002019\U000000B4`]", "'", text, re.A)
+        text = re.sub(r"[\U00002018\U00002019\U000000B4`]", "'", text, flags=re.A)
         
         ## Strip any remaining emojis or other high unicode chars
         text = re.sub(r'[^\x00-\x7F]+','', text)
@@ -319,18 +355,24 @@ class AvatarApp():
             self.viseme_changed = True
 
     def process_tts(self):
-        if len(self.queue)>0 and not self.is_talking:
-            self.log.info("Starting TTS")
+        if self.is_talking:
+            return
+
+        with self.queue_lock:
+            if not self.queue:
+                return
             character, msg = self.queue.pop(0)
-            self.set_current(character)
-            msg = self.apply_corrections(msg)
-            msg = self.process_emoji(msg)
-            msg = self.apply_nonword_filter(msg)
-            self.log.info(f"Saying {msg}")
-            self.is_talking = True
-            self.update_obs()
-            self.update_title()
-            self.future = self.current.tts.speak_text_async(msg)
+
+        self.log.info("Starting TTS")
+        self.set_current(character)
+        msg = self.apply_corrections(msg)
+        msg = self.process_emoji(msg)
+        msg = self.apply_nonword_filter(msg)
+        self.log.info(f"Saying {msg}")
+        self.is_talking = True
+        self.update_obs()
+        self.update_title()
+        self.future = self.current.tts.speak_text_async(msg)
 
     def update_viseme(self):
         if self.viseme_changed:

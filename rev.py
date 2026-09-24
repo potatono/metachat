@@ -10,6 +10,7 @@ from rev_ai.streamingclient import RevAiStreamingClient
 from config import CONFIG, SECRETS
 from logs import Logger
 from eventbus import eventbus, Events
+from util import apply_corrections
 
 class MicrophoneStream(object):
     def __init__(self, rate, chunk):
@@ -90,6 +91,10 @@ class TranscriptApp():
         self.running = False
         self.text = None
         self.sendTimer = None
+        self.default_send_timeout = CONFIG.getfloat("rev.ai", "send_timeout", fallback=1.0)
+        self.send_timeout = self.default_send_timeout
+        # True between the first partial of an utterance and its final.
+        self.in_utterance = False
         self.init_corrections()
 
     def start(self):
@@ -137,21 +142,46 @@ class TranscriptApp():
         for part in parts:
             self.corrections.append(part.split(':'))
 
+        self.session_corrections = []
+
+    def add_session_corrections(self, corrections):
+        """Add temporary corrections (e.g. code identifiers) for this session.
+
+        corrections is a dict of spoken form -> written form."""
+        for bad, good in corrections.items():
+            self.log.info(f"Session correction: '{bad}' -> '{good}'")
+            self.session_corrections.append([bad, good])
+
+    def clear_session_corrections(self):
+        self.session_corrections = []
+
+    def set_send_timeout(self, value):
+        """Adjust how long after the last phrase a line is sent.  None
+        restores the configured default."""
+        self.send_timeout = value if value is not None else self.default_send_timeout
+        self.log.info(f"send_timeout set to {self.send_timeout}")
+
     def apply_corrections(self, text):
-        for (bad,good) in self.corrections:
-            text = re.sub(f"\\b{bad}\\b", f"{good}", text, re.IGNORECASE)
-        
-        return text
+        text = apply_corrections(text, self.corrections)
+        return apply_corrections(text, self.session_corrections)
 
     def handle_response(self, response):
         data = json.loads(response)
-            
-        if data["type"] == "final":
+
+        if data["type"] == "partial":
+            # Only the silence->speech transition matters (barge-in); don't
+            # spam the bus with every partial.
+            if not self.in_utterance and data.get("elements"):
+                self.in_utterance = True
+                v = [i['value'] for i in data['elements']]
+                eventbus.publish(Events.STREAMER_PARTIAL, data=''.join(v), source="microphone")
+        elif data["type"] == "final":
+            self.in_utterance = False
             v = [i['value'] for i in data['elements']]
             text = ''.join(v)
 
             text = self.apply_corrections(text)
-            
+
             eventbus.publish(Events.STREAMER_PHRASE, data=text, source="microphone")
             self.append_text(text)
 
@@ -166,7 +196,7 @@ class TranscriptApp():
         if self.sendTimer is not None:
             self.sendTimer.cancel()
 
-        self.sendTimer = Timer(CONFIG.getfloat("rev.ai", "send_timeout", fallback=1.0), self.send_text)
+        self.sendTimer = Timer(self.send_timeout, self.send_text)
         self.sendTimer.start()
 
     def send_text(self):

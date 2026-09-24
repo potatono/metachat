@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Code Review</title>
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.47/css/diff2html.min.css">
+    <link rel="stylesheet" href="review.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.47/diff2html.min.js"></script>
+</head>
+<body>
+    <header>
+        <span id="mode" class="badge">idle</span>
+        <span id="activity" class="progress"></span>
+        <span id="chunk" class="progress"></span>
+        <span id="file" class="file"></span>
+        <span id="hunk" class="progress"></span>
+        <span id="status" title="bridge connection">&#128992;</span>
+    </header>
+
+    <main id="diff-container">
+        <div id="diff" class="empty">waiting for a review to start&hellip;</div>
+    </main>
+
+    <aside id="comments"></aside>
+
+    <footer>
+        <span id="caption-name">DYSON</span>
+        <span id="caption"></span>
+    </footer>
+
+    <script src="review.js"></script>
+</body>
+</html>

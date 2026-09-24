@@ -1,0 +1,36 @@
+{
+  "//": "Example .claude/settings.json hook config for a project being paired on. Adjust the metachat path; python3 must be on PATH.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/metachat/channel/hooks/block_secrets.py"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/metachat/channel/hooks/state_event.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/metachat/channel/hooks/state_event.py"
+          }
+        ]
+      }
+    ]
+  }
+}
