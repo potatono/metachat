@@ -1,0 +1,2 @@
+# Served to bash via curl | bash; CRLF breaks it.
+*.sh text eol=lf
