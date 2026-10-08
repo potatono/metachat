@@ -29,7 +29,7 @@ eventbus.create_subscriber("chatbot", [Events.CHAT_MESSAGE], callback=self.on_ev
 
 ### Key Configuration Patterns
 - OAuth sections per service: `[chatbot.twitch.tv]`, `[streamer.twitch.tv]`, `[restream.io]`
-- Feature toggles: `send_to_twitch`, `use_voice_input`, `enable_copilot_server`
+- Feature toggles: `send_to_twitch`, `use_voice_input`
 - Path templates with date interpolation: `logs/chat-%(year)s-%(month)s-%(day)s.log`
 
 ## Development Workflows

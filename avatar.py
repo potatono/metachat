@@ -180,21 +180,40 @@ class AvatarApp():
             self.update_obs()
             self.update_title()
 
-    def ack(self, character="bobby"):
+    def work(self, character="bobby"):
+        """A silent ack that holds while the character is busy (tools running),
+        so it stays on screen with its thinking eyes.  Never interrupts or
+        pre-empts speech: say() ends it, and it's skipped while lines are
+        playing or queued."""
+        # Check, claim, and set the face under the lock process_tts claims
+        # speech with, so a line can't start in between and get its face
+        # overwritten.  The OBS/title update reads the flags, so it's right
+        # whichever runs last.
+        with self.queue_lock:
+            if self.is_ack or self.is_talking or self.queue:
+                return
+            self.is_ack = True
+            self.set_ack_face(character)
+        self.update_obs()
+        self.update_title()
+
+    def ack(self, character="bobby", sound=True):
         if self.is_ack:
             return
 
         self.is_ack = True
+        self.set_ack_face(character)
+        self.update_obs()
+        self.update_title()
+        if sound:
+            self.current.ack_sound.play()
+
+    def set_ack_face(self, character):
         self.set_current(character)
         self.left_eye_id = 6
         self.right_eye_id = 6
         self.viseme_id = 21
-        self.is_talking = True
         self.viseme_changed = True
-        self.update_obs()
-        self.update_title()
-        self.is_talking = False
-        self.current.ack_sound.play()
 
     def init_images(self):
         for character in self.characters.values():
@@ -237,7 +256,7 @@ class AvatarApp():
 
     def update_title(self):
         if self.enable_title_updates:
-            if self.is_talking:
+            if self.is_talking or self.is_ack:
                 pygame.display.set_caption("metachat talking")
             else:
                 pygame.display.set_caption("metachat")
@@ -362,6 +381,10 @@ class AvatarApp():
             if not self.queue:
                 return
             character, msg = self.queue.pop(0)
+            # Claim the avatar for speech (ending any ack) before releasing
+            # the lock, so a concurrent work() can't ack over this line.
+            self.is_talking = True
+            self.is_ack = False
 
         self.log.info("Starting TTS")
         self.set_current(character)
@@ -369,7 +392,6 @@ class AvatarApp():
         msg = self.process_emoji(msg)
         msg = self.apply_nonword_filter(msg)
         self.log.info(f"Saying {msg}")
-        self.is_talking = True
         self.update_obs()
         self.update_title()
         self.future = self.current.tts.speak_text_async(msg)
@@ -382,7 +404,8 @@ class AvatarApp():
     def update_obs(self):
         if self.enable_obs_updates:
             self.obs.ensure_connected()
-            self.toggle_obs(self.is_talking)
+            # Shown while speaking or acking (incl. the working hold).
+            self.toggle_obs(self.is_talking or self.is_ack)
 
     def toggle_obs(self, toggle_to=True):
         uuid = self.obs.get_current_scene_uuid()

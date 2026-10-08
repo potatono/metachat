@@ -31,7 +31,7 @@ def main():
 
     if tool in ("Read", "Edit", "Write", "NotebookEdit"):
         text = str(tool_input.get("file_path", ""))
-    elif tool == "Bash":
+    elif tool in ("Bash", "PowerShell"):
         text = str(tool_input.get("command", ""))
     else:
         return 0

@@ -22,7 +22,7 @@ from logs import Logger
 from eventbus import eventbus, Events
 
 class ChatbotApp():
-    def __init__(self, name=None, *, tts=None, webserver=None, twitch=None,
+    def __init__(self, name=None, *, tts=None, twitch=None,
                  oauth=None, all_names=None):
         # The character key (e.g. "bobby") selects the [chatbot.<name>] config
         # section and the avatar character to render/speak as.
@@ -69,7 +69,6 @@ class ChatbotApp():
 
         # Shared resources are owned by ChatbotManager and injected here.
         self.tts = tts
-        self.webserver = webserver
         self.twitch = twitch
         self.oauth = oauth
 
@@ -114,22 +113,6 @@ class ChatbotApp():
         if self.is_activated(message):
             if self.tts:
                 self.tts.ack(character=self.character)
-
-    def on_copilot_message(self, text):
-        self.log.debug(f"Got copilot message: {text}")
-
-        if self.tts:
-            self.tts.ack(character=self.character)
-            
-        message = { "author": self.streamer_name, "text": text, "sent": time.time() }
-
-        self.append_to_history(message)
-        reply_context = {
-            "type": "code",
-            "prompt": "Reply with code snippet.  Enclose the code in triple backticks.",
-            "active_file": self.webserver.last_active_file
-        }
-        self.reply(reply_context)
 
     def on_message(self, message):
         try:
@@ -696,7 +679,6 @@ class ChatbotApp():
                 result = {
                     "type": "code",
                     "prompt": "Reply with code snippet.  Enclose the code in triple backticks.",
-                    "active_file": (self.webserver and self.webserver.last_active_file) or None
                 }
             else:
                 result = {
@@ -832,8 +814,8 @@ class ChatbotApp():
             self.log.error("Got message of None to say, returning early.")
             return
         
-        if self.webserver and self.is_code_response(message):
-            self.webserver.say(message)
+        # Code can't be spoken or read in chat; say only the prose around it.
+        if self.is_code_response(message):
             message = self.strip_code(message)
             self.log.debug(f"Message to send after stripping code: '{message}'")
 

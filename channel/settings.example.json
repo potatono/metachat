@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Edit|Write|NotebookEdit|Bash",
+        "matcher": "Read|Edit|Write|NotebookEdit|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -24,6 +24,16 @@
     "PostToolUse": [
       {
         "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/metachat/channel/hooks/state_event.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
         "hooks": [
           {
             "type": "command",

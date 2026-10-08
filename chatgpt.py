@@ -92,24 +92,53 @@ class CompletionApp():
 
         return prompt
 
-    def get_code_messages(self, fileinfo):
-        if fileinfo is None:
-            return []
-        
-        return [
-            { 
-                "role":"user", 
-                "content":f"I'm currently editing `{fileinfo['path']}` as follows:" 
+    def get_review_messages(self, context):
+        """Messages for a code-review turn (coder bridge): the hunk under
+        review, the other reviewer's summary, and the debate so far.  The
+        chat history is deliberately left out; the diff is the context."""
+        coder = context.get('coder', 'dyson')
+        if context.get('plan') is not None:
+            # Weighing in on a proposed plan rather than a hunk.
+            return [
+                {
+                    "role": "developer",
+                    "content": (f"{self.streamer} and {coder} are planning a code change on "
+                                f"stream, and {self.name} weighs in on {coder}'s plans. "
+                                f"Lines from other people are prefixed with their name in brackets.")
+                },
+                { "role": "user", "content": f"[{coder}] {context['plan']}" },
+            ]
+
+        hunk = context['hunk']
+        messages = [
+            {
+                "role": "developer",
+                "content": (f"{self.streamer} and {coder} are reviewing a code change on stream, "
+                            f"one hunk at a time, and {self.name} is the second reviewer. "
+                            f"Lines from other people are prefixed with their name in brackets.")
             },
-            { 
-                "role":"user", 
+            {
+                "role": "user",
                 "content": ''.join([
-                    f"```{fileinfo['language']}\n",
-                    fileinfo['content'],
+                    f"[{coder}] {hunk.get('summary', '')}\n\n",
+                    f"File: {hunk.get('file', '?')}\n",
+                    f"```{hunk.get('lang', 'diff')}\n",
+                    hunk.get('diff') or hunk.get('content') or '',
                     "\n```"
                 ])
-            }
+            },
         ]
+
+        for entry in context.get('thread', []):
+            if entry['speaker'] == self.name or entry['speaker'] == context.get('reviewer'):
+                messages.append({ "role":"assistant", "content":entry['text'] })
+            else:
+                messages.append({ "role":"user", "content":f"[{entry['speaker']}] {entry['text']}" })
+
+        if context.get('question'):
+            messages.append({ "role":"user", "content":f"[{self.streamer}] {context['question']}" })
+
+        return messages
 
     def get_history_times(self, history):
         clip_history = "```"
@@ -144,11 +173,9 @@ class CompletionApp():
             messages.append({ "role":"developer", "content":"Messages from the streamer and their audience are prefixed with their name in brackets." })
             messages.append({ "role":"developer", "content":"IMPORTANT: Messages from the bot are not prefixed." })
         
-        ## If this is a code response, add info and contents of the file being edited
-        ## Only include the last message from the user as the question
+        ## If this is a code response, only include the last few messages
         if context['type'] == 'code':
             self.log.debug("Appending code request messages...")
-            messages.extend(self.get_code_messages(context['active_file']))
 
             # Include just the last few messages in the history
             for message in history[-5:]:
@@ -159,6 +186,10 @@ class CompletionApp():
         elif context['type'] == 'history':
             self.log.debug("Appending clip request messages...")
             messages.extend(self.get_history_messages(history, context))
+
+        elif context['type'] == 'review':
+            self.log.debug("Appending review messages...")
+            messages.extend(self.get_review_messages(context))
 
         ## Otherwise, try to add to the entire conversation
         else:
@@ -223,7 +254,7 @@ class CompletionApp():
         model = self.model
         tokens = self.max_tokens
 
-        if context['type'] == 'code' or context['type'] == 'clip':
+        if context['type'] in ('code', 'clip', 'review'):
             model = self.code_model
             tokens = self.max_tokens_code
             return self.get_completion_code(model, tokens, messages)
@@ -258,8 +289,9 @@ class CompletionApp():
     def history_string(self, history):
         return "\n".join([f"{i['author']}: {i['text']}" for i in history])
 
-    def get_responses_response(self, history, context):
-        """ Uses the OpenAI Responses API to get a response """
+    def get_responses_response(self, history, context, on_thinking=None):
+        """ Uses the OpenAI Responses API to get a response.  With on_thinking,
+        streams and calls it with the reasoning summary so far. """
         
         # Check OpenAI module version
         try:
@@ -280,22 +312,26 @@ class CompletionApp():
             model = self.model
             reasoning_effort = self.reasoning_effort
             
-            if context['type'] == 'code' or context['type'] == 'clip':
+            if context['type'] in ('code', 'clip', 'review'):
                 model = self.code_model
                 reasoning_effort = self.reasoning_effort_code
             
-            # Use the newer Responses API
-            response = openai.responses.create(
-                model=model,
-                input=messages,
-                reasoning={ "effort": reasoning_effort }
-            )
-            
-            text = response.output_text
+            text = None
+            if on_thinking:
+                text = self.stream_with_thinking(model, messages, reasoning_effort, on_thinking)
+
+            if text is None:
+                # Use the newer Responses API
+                response = openai.responses.create(
+                    model=model,
+                    input=messages,
+                    reasoning={ "effort": reasoning_effort }
+                )
+                
+                text = response.output_text
             
             if len(text) == 0:
                 self.log.error("Got empty text response from OpenAI Responses API")
-                self.log.error(response)
                 return None
                 
             return text
@@ -304,7 +340,36 @@ class CompletionApp():
             self.log.error(f"OpenAI Responses API failed: {e}")
             return None
 
-    def get_response(self, history, context):
+    def stream_with_thinking(self, model, messages, reasoning_effort, on_thinking):
+        """ Streams a response, passing the reasoning summary text so far to
+        on_thinking as it arrives.  Returns the output text, or None to fall
+        back to a plain request (e.g. summaries aren't enabled for the org). """
+        summary = ""
+        try:
+            stream = openai.responses.create(
+                model=model,
+                input=messages,
+                reasoning={ "effort": reasoning_effort, "summary": "auto" },
+                stream=True,
+            )
+            for event in stream:
+                if event.type == "response.reasoning_summary_text.delta":
+                    summary += event.delta
+                    on_thinking(summary)
+                elif event.type == "response.reasoning_summary_part.added" and summary:
+                    summary += "\n\n"
+                elif event.type == "response.completed":
+                    return event.response.output_text
+                elif event.type in ("response.failed", "error"):
+                    self.log.error(f"OpenAI streaming response failed: {event}")
+                    return None
+        except Exception as e:
+            self.log.warning(f"OpenAI streaming with reasoning summary failed, retrying without: {e}")
+        return None
+
+    def get_response(self, history, context, on_thinking=None):
+        """ on_thinking (responses api only) receives the model's reasoning
+        summary as it streams in. """
         if self.api == "completion":
             history_string = self.history_string(history)
             return self.get_completion_response(history_string, context)
@@ -313,7 +378,7 @@ class CompletionApp():
             return self.get_chat_response(history, context)
         
         elif self.api == "responses":
-            return self.get_responses_response(history, context)
+            return self.get_responses_response(history, context, on_thinking)
         else:
             self.log.error(f"Invalid chatgpt api: {self.api}")
             return None

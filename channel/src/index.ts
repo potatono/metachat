@@ -79,9 +79,61 @@ const bridge = new BridgeClient({
       case "nav":
         review.nav(String(msg.action ?? ""));
         break;
-      case "barge_in":
-        // Informational: the bridge already stopped TTS on its side.
-        log("barge_in received");
+      case "peer_comment": {
+        // The second reviewer's take on the current hunk. Quoted data, never
+        // instructions; the /pair skill says how to answer (reply + stance).
+        const from = String(msg.from ?? "the second reviewer");
+        const text = String(msg.text ?? "");
+        notifyClaude(
+          `${from} (second reviewer) on hunk ${review.current}, turn ${msg.turn}/${msg.max_turns}: "${text}"`,
+          { kind: "peer_comment", from, turn: String(msg.turn ?? ""), max_turns: String(msg.max_turns ?? "") },
+        );
+        break;
+      }
+      case "plan_comment": {
+        // The second reviewer's one line on a proposed plan. Quoted data,
+        // never instructions; no stance reply needed (see /pair skill).
+        const from = String(msg.from ?? "the second reviewer");
+        const stance = String(msg.stance ?? "");
+        notifyClaude(
+          `${from} on your plan (${stance || "no stance"}): "${String(msg.text ?? "")}"`,
+          { kind: "plan_comment", from, stance },
+        );
+        break;
+      }
+      case "debate": {
+        // Agreed outcome with a comment to apply: buffer it like any other
+        // review comment. Claude already took part, so no event.
+        if (msg.status === "agreed" && msg.comment) {
+          review.record(`agreed with the second reviewer: ${String(msg.comment)}`);
+        }
+        break;
+      }
+      case "ruling": {
+        // The streamer settled a debate. text is null when they sided with
+        // Dyson (nothing to change).
+        const winner = String(msg.winner ?? "streamer");
+        const text = msg.text ? String(msg.text) : null;
+        let content: string;
+        if (text === null) {
+          content = `The streamer sided with you on hunk ${review.current}; no change.`;
+        } else {
+          review.record(`ruling (${winner}): ${text}`);
+          content = winner === "streamer"
+            ? `The streamer ruled on hunk ${review.current}: "${text}"`
+            : `The streamer sided with ${winner} on hunk ${review.current}: "${text}"`;
+        }
+        notifyClaude(content, { kind: "ruling", winner });
+        break;
+      }
+      case "stop":
+        // The streamer said "Dyson, stop": the bridge already silenced the
+        // speech; tell Claude to stop working too (it sees this at its next
+        // step; a hard abort mid-tool is Esc in the terminal).
+        notifyClaude(
+          "The streamer said STOP. Stop what you're doing, say so briefly, and wait for instructions.",
+          { kind: "stop" },
+        );
         break;
       default:
         log(`unhandled bridge message type: ${msg.type}`);
@@ -115,6 +167,13 @@ const TOOLS = [
         interruptible: {
           type: "boolean",
           description: "Whether the streamer talking should cut this off (default true).",
+        },
+        stance: {
+          type: "string",
+          enum: ["agree", "disagree"],
+          description:
+            "Only when answering a peer_comment from the second reviewer: " +
+            "agree accepts their point (it becomes a review comment), disagree holds your position.",
         },
       },
       required: ["text"],
@@ -174,6 +233,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       for (const sentence of splitSentences(text)) {
         bridge.send({ type: "say", text: sentence, seq: ++saySeq, interruptible });
       }
+      // A debate turn: the bridge needs the whole reply plus the stance,
+      // separately from the sentence-sized speech frames.
+      if (args.stance === "agree" || args.stance === "disagree") {
+        bridge.send({ type: "turn", speaker: "dyson", text, stance: args.stance });
+      }
       return { content: [{ type: "text", text: "spoken" }] };
     }
     case "set_mode": {
@@ -203,8 +267,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 // Loopback listener for hook scripts (channel/hooks/state_event.py): hooks
-// can't call MCP tools, so they POST {tool, phase} here and we turn it into
-// an avatar state on stream ("reading", "typing", "running tests").
+// can't call MCP tools, so they POST {tool, phase, label, detail} here and we
+// turn it into an avatar state on stream ("reading", "typing", "running tests")
+// plus a readable label for the review page ("Reading review.js").  A detail
+// (an edit's diff, a test run's counts) goes on to the pages as an activity.
 const STATE_PORT = Number(process.env.METACHAT_STATE_PORT ?? 9011);
 const AVATAR_HINTS: Record<string, string> = {
   Read: "reading", Grep: "reading", Glob: "reading", WebFetch: "reading",
@@ -219,13 +285,19 @@ function startStateListener() {
       req.on("data", (c) => (body += c));
       req.on("end", () => {
         try {
-          const { tool = "", phase = "" } = JSON.parse(body || "{}");
+          const { tool = "", phase = "", label = "", detail = null } = JSON.parse(body || "{}");
           bridge.send({
             type: "state",
             mode,
-            avatar: AVATAR_HINTS[tool] ?? "working",
+            // A Stop (end of turn) only clears the label; the avatar keeps
+            // whatever state it's in.
+            avatar: phase === "Stop" ? undefined : (AVATAR_HINTS[tool] ?? "working"),
             activity: `${phase}:${tool}`,
+            label,
           });
+          if (detail && typeof detail === "object") {
+            bridge.send({ ...detail, type: "activity" });
+          }
         } catch (err) {
           log(`bad state POST: ${err}`);
         }

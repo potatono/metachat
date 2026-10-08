@@ -5,7 +5,8 @@
     <title>Code Review</title>
     <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css">
-    <link rel="stylesheet" href="review.css">
+    <link rel="stylesheet" href="/review/review.css">
+    <link rel="stylesheet" href="/bridge.css">
     <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/js/diff2html.min.js"></script>
 </head>
 <body>
@@ -22,13 +23,22 @@
         <div id="diff" class="empty">waiting for a review to start&hellip;</div>
     </main>
 
-    <aside id="comments"></aside>
+    <aside id="side" class="hidden">
+        <div id="thread"></div>
+        <div id="debate" class="debate-status"></div>
+        <div id="comments"></div>
+    </aside>
+
+    <!-- What the coder and reviewer are working on right now; one row each. -->
+    <section id="thinking" class="hidden"></section>
 
     <footer>
         <span id="caption-name">DYSON</span>
         <span id="caption"></span>
     </footer>
 
-    <script src="review.js"></script>
+    <!-- bridge.js adds the token prompt when no token is stored. -->
+    <script src="/bridge.js"></script>
+    <script src="/review/review.js"></script>
 </body>
 </html>

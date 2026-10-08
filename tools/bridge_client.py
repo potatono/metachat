@@ -13,7 +13,7 @@ Commands:
     raw <json>                send an arbitrary frame
     quit
 
-Incoming frames (utterance/nav/barge_in) are printed as they arrive.
+Incoming frames (utterance/nav/stop) are printed as they arrive.
 The token defaults to [coder] token in secrets.ini.
 """
 import json

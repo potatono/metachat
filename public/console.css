@@ -1,0 +1,175 @@
+:root {
+    --bg: #181818;
+    --panel: #202020;
+    --border: #3a3a3a;
+    --text: #e8e8e8;
+    --dim: #9a9a9a;
+    --accent: #8f7bd8;   /* dyson purple */
+    --bobby: #d7833a;    /* bobby orange */
+    --streamer: #6fbf73;
+    --warn: #e0a030;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+body {
+    display: grid;
+    grid-template-rows: 3.2em 1fr auto auto;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    padding: 0 1em;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+}
+
+.badge {
+    background: var(--accent);
+    color: #101010;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.15em 0.7em;
+    border-radius: 0.4em;
+    letter-spacing: 0.05em;
+}
+
+.progress { color: var(--dim); white-space: nowrap; }
+.label {
+    flex: 1;
+    min-width: 0;
+    color: var(--dim);
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#log {
+    overflow-y: auto;
+    padding: 1em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+}
+
+.empty { color: var(--dim); margin: auto; }
+
+.msg {
+    max-width: 52em;
+    padding: 0.5em 0.8em;
+    background: var(--panel);
+    border-left: 3px solid var(--border);
+    border-radius: 0 0.4em 0.4em 0;
+}
+.msg .who {
+    font-size: 0.8em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.2em;
+}
+.msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.msg.speaker-dyson { border-left-color: var(--accent); }
+.msg.speaker-dyson .who { color: var(--accent); }
+.msg.speaker-bobby { border-left-color: var(--bobby); }
+.msg.speaker-bobby .who { color: var(--bobby); }
+.msg.speaker-streamer { border-left-color: var(--streamer); align-self: flex-end; }
+.msg.speaker-streamer .who { color: var(--streamer); }
+.msg.speaker-system { border-left-color: var(--warn); color: var(--warn); }
+.msg.speaker-system .who { color: var(--warn); }
+
+#composer {
+    display: flex;
+    gap: 0.75em;
+    padding: 0.75em 1em;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+}
+#composer textarea {
+    flex: 1;
+    resize: vertical;
+    padding: 0.5em 0.75em;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font: inherit;
+}
+#composer button {
+    align-self: flex-end;
+    padding: 0.5em 1.5em;
+    background: var(--accent);
+    color: var(--text);
+    border: none;
+    border-radius: 4px;
+    font: inherit;
+    cursor: pointer;
+}
+
+/* Tool steps and test results between messages: compact and dim, so the
+   conversation still reads first. */
+.steps {
+    margin: 0;
+    padding: 0.2em 0 0.2em 1em;
+    list-style: none;
+    border-left: 2px dashed var(--border);
+    color: var(--dim);
+    font-size: 0.85em;
+}
+.steps li { padding: 0.1em 0; }
+.steps li::before { content: "\2192  "; color: var(--accent); }
+.steps li.tests::before { content: ""; }
+.badge-pass, .badge-fail {
+    font-weight: 700;
+    padding: 0 0.45em;
+    border-radius: 0.3em;
+    color: #101010;
+}
+.badge-pass { background: #4caf50; }
+.badge-fail { background: #e05555; }
+
+/* Live dictation of a spoken change request, above the request box. */
+#dictation {
+    padding: 0.6em 1em;
+    background: #2a1f1f;
+    border-top: 2px solid #e05555;
+}
+#dictation.hidden { display: none; }
+.dictation-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    color: #e05555;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.dictation-head .hint { margin-left: auto; color: var(--dim); font-weight: 400; font-size: 0.85em; }
+.rec {
+    width: 0.7em;
+    height: 0.7em;
+    border-radius: 50%;
+    background: #e05555;
+    animation: rec-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+#dictation-text {
+    margin-top: 0.35em;
+    font-size: 1.15em;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

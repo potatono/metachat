@@ -1,0 +1,36 @@
+/* Shared by the review page and the request console (see bridge.js).
+   Pages define --bg, --panel, --border, --text, --dim, --accent, --warn. */
+
+/* Token prompt: overlays the page so a pasted token never touches the URL. */
+#token-form {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75em;
+    background: var(--bg);
+}
+#token-form.hidden { display: none; }
+#token-form label { color: var(--dim); }
+#token-form input {
+    width: 22em;
+    padding: 0.5em 0.75em;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font: inherit;
+}
+#token-form button {
+    padding: 0.4em 1.5em;
+    background: var(--accent);
+    color: var(--text);
+    border: none;
+    border-radius: 4px;
+    font: inherit;
+    cursor: pointer;
+}
+#token-error { color: var(--warn); min-height: 1.2em; }

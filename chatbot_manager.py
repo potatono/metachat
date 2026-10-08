@@ -19,7 +19,7 @@ from util import pick_winner
 
 The avatar subsystem already multiplexes multiple characters through a single
 window; this manager does the equivalent for the chatbots.  It owns the shared
-output resources (the one avatar/TTS, the copilot webserver, and the Twitch
+output resources (the one avatar/TTS, the static webserver, and the Twitch
 connections), subscribes to the eventbus once, dispatches each message to every
 character, and arbitrates which single character actually replies. '''
 class ChatbotManager():
@@ -43,15 +43,11 @@ class ChatbotManager():
         elif CONFIG.getboolean("chatbot", "send_to_avatar", fallback=False):
             self.tts = AvatarApp()
 
-        # The HTTP static server (serves public/, including the review page).
-        # The legacy copilot WebSocket + LLM path only exists when
-        # enable_copilot_server is on; without it the webserver is HTTP-only.
+        # The HTTP static server (serves public/: the request console and the
+        # review page).
         self.webserver = None
         if CONFIG.getboolean("webserver", "enable", fallback=True):
-            on_copilot = None
-            if CONFIG.getboolean("chatbot", "enable_copilot_server", fallback=False):
-                on_copilot = self.on_copilot_message
-            self.webserver = WebserverApp(on_copilot_message=on_copilot)
+            self.webserver = WebserverApp()
 
         # One Twitch token per oauth section (the handshake happens lazily in
         # ensure_connected; multiple characters never share an oauth section,
@@ -83,7 +79,6 @@ class ChatbotManager():
             self.chatbots[n] = ChatbotApp(
                 n,
                 tts=self.tts,
-                webserver=self.webserver,
                 twitch=twitch,
                 oauth=oauth,
                 all_names=self.bot_names,
@@ -92,7 +87,7 @@ class ChatbotManager():
         # Characters in config order, for deterministic arbitration.
         self.ordered = [self.chatbots[n] for n in self.names]
 
-        # The character that fields copilot/code requests.
+        # The character that fields code requests (and the coder bridge).
         code_name = CONFIG.get("chatbot", "code_character", fallback=self.names[0])
         if code_name in self.chatbots:
             self.code_character = self.chatbots[code_name]
@@ -103,10 +98,12 @@ class ChatbotManager():
         self.last_addressed = None
 
         # Characters (by config key) excluded from LLM replies, acks, and
-        # voice commands.  The coder bridge suppresses the code character
-        # while a remote session is connected; bookkeeping (history/times)
-        # keeps running so the character stays current.
-        self.suppressed = set()
+        # voice commands, each with the reasons it's muted ("session",
+        # "review", "dictation"), so lifting one reason can't undo another.
+        # The coder bridge suppresses the code character while a remote
+        # session is connected; bookkeeping (history/times) keeps running so
+        # the character stays current.
+        self.suppressions = {}
 
         # Last seen coder mode, for reacting only to transitions.
         self.last_coder_mode = None
@@ -157,13 +154,17 @@ class ChatbotManager():
 
     # --- Suppression (used by the coder bridge) ---
 
-    def suppress(self, character):
-        self.log.info(f"Suppressing {character} replies")
-        self.suppressed.add(character)
+    @property
+    def suppressed(self):
+        return {c for c, reasons in self.suppressions.items() if reasons}
 
-    def unsuppress(self, character):
-        self.log.info(f"Restoring {character} replies")
-        self.suppressed.discard(character)
+    def suppress(self, character, reason="default"):
+        self.log.info(f"Suppressing {character} replies ({reason})")
+        self.suppressions.setdefault(character, set()).add(reason)
+
+    def unsuppress(self, character, reason="default"):
+        self.log.info(f"Lifting {reason} suppression of {character}")
+        self.suppressions.get(character, set()).discard(reason)
 
     # --- Event handling ---
 
@@ -222,9 +223,6 @@ class ChatbotManager():
         prompt = prompts.get(mode)
         if prompt:
             random.choice(candidates).reply({"type": "command", "prompt": prompt})
-
-    def on_copilot_message(self, text):
-        self.code_character.on_copilot_message(text)
 
     def on_message(self, message):
         try:

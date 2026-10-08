@@ -1,5 +1,6 @@
 
 import curses
+import textwrap
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -205,12 +206,16 @@ class Application():
 
     def add_log_line(self, line):
         """Add a line to the log buffer, splitting multi-line messages"""
-        # Split on newlines to handle tracebacks properly
-        lines = line.split('\n')
-        for single_line in lines:
-            self.log_lines.append(single_line)
-            if len(self.log_lines) > self.max_log_lines:
-                self.log_lines.pop(0)
+        # Split on newlines to handle tracebacks properly, then wrap long lines
+        # (conversation turns run long) rather than cutting them at the edge.
+        _, width = self.log_window.getmaxyx()
+        for single_line in line.split('\n'):
+            wrapped = textwrap.wrap(single_line, max(width - 1, 20),
+                                    subsequent_indent="    ") or [""]
+            for part in wrapped:
+                self.log_lines.append(part)
+                if len(self.log_lines) > self.max_log_lines:
+                    self.log_lines.pop(0)
 
     def redraw_logs(self):
         """Redraw the log window"""

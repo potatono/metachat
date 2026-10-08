@@ -23,6 +23,9 @@ export class ReviewSession {
   private cursor = 0;
   private contextLines = new Map<number, number>();
   private comments = new Map<number, string[]>();
+  // Bumped per begin() and sent with every hunk so the bridge can tell a
+  // re-review from "back" to hunk 1.
+  private reviewId = 0;
   active = false;
 
   constructor(
@@ -36,14 +39,21 @@ export class ReviewSession {
     this.cursor = 0;
     this.contextLines.clear();
     this.comments.clear();
+    this.reviewId++;
     this.active = hunks.length > 0;
     if (this.active) this.sendCurrent();
+  }
+
+  // 1-based index of the hunk on screen, for messages to Claude.
+  get current(): number {
+    return this.cursor + 1;
   }
 
   private sendCurrent(overrides: Partial<Hunk> & { content?: string } = {}) {
     const hunk = this.hunks[this.cursor];
     this.send({
       type: "hunk",
+      review: this.reviewId,
       index: this.cursor + 1,
       total: this.hunks.length,
       ...hunk,
@@ -92,11 +102,18 @@ export class ReviewSession {
     }
   }
 
-  comment(text: string) {
+  // Buffers a comment on the current hunk without forwarding it: debate
+  // outcomes and rulings, which Claude already heard about.
+  record(text: string) {
     if (!this.active) return;
     const list = this.comments.get(this.cursor) ?? [];
     list.push(text);
     this.comments.set(this.cursor, list);
+  }
+
+  comment(text: string) {
+    if (!this.active) return;
+    this.record(text);
 
     if (QUESTION_RE.test(text.trim())) {
       const hunk = this.hunks[this.cursor];
@@ -140,6 +157,9 @@ export class ReviewSession {
 
   private complete() {
     this.active = false;
+    // The pages stamp the verdict over the code.
+    const comments = [...this.comments.values()].reduce((n, list) => n + list.length, 0);
+    this.send({ type: "review_result", approved: comments === 0, comments });
     const parts: string[] = ["Review complete."];
     if (this.comments.size === 0) {
       parts.push("No comments; move on to the next chunk.");
