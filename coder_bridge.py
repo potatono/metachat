@@ -54,6 +54,11 @@ TRAILER = re.compile(r"[,\s]+(?:too|as well|then|please|thanks|dyson)$")
 # approvals ("looks good to me", "I like it") count too.
 PLAN_GO = (r"(?:go|go ahead|go for it|let's (?:do it|go|do this)|do it|make it so"
            r"|sounds good(?: to me)?|(?:that|the) plan (?:works|looks good)|ship it)")
+# Dropping a plan that a dictation started ("cancel", "forget about it").
+PLAN_CANCEL = (r"(?:cancel(?: that| it| the plan)?|forget (?:about )?it|never ?mind"
+               r"|scratch that)")
+# A line that starts like this is for chat, not for the open plan.
+OFF_RECORD = re.compile(r"^\W*off the record\b", re.IGNORECASE)
 
 
 def clean_utterance(text):
@@ -70,6 +75,11 @@ def clean_utterance(text):
 def match_plan_go(text):
     """True when the utterance approves a proposed plan."""
     return bool(re.fullmatch(PLAN_GO, clean_utterance(text))) or match_nav(text) == "approve"
+
+
+def match_plan_cancel(text):
+    """True when the utterance drops the plan being discussed."""
+    return bool(re.fullmatch(PLAN_CANCEL, clean_utterance(text)))
 
 
 def match_nav(text):
@@ -153,6 +163,9 @@ class CoderBridgeApp():
         self.chat_history = deque(maxlen=CHAT_HISTORY)
         # Lines of a spoken change request being dictated, or None.
         self.dictation = None
+        # True once a dictation is sent: the streamer's replies keep going to
+        # the coder, unaddressed, until they say go or cancel.
+        self.plan_talk = False
         # The coder's lines while planning, for the second reviewer to weigh
         # in on once they settle.
         self.plan_lines = []
@@ -338,8 +351,9 @@ class CoderBridgeApp():
         if self.manager:
             self.manager.unsuppress(self.manager.code_character.character, "session")
             # Nobody left to send a dictation to; don't leave everyone muted.
-            if self.dictation is not None:
+            if self.dictation is not None or self.plan_talk:
                 self.dictation = None
+                self.plan_talk = False
                 self.mute_for_dictation(False)
                 self.broadcast_to_viewers({"type": "dictation", "state": "cancelled", "text": ""})
         self.set_mode("idle")
@@ -444,6 +458,10 @@ class CoderBridgeApp():
             self.cancel_debate()
             self.review_id = None
             self.reviewed.clear()
+
+        # Building or reviewing means the plan talk is over, however it ended.
+        if self.plan_talk and current in ("implement", "review"):
+            self.end_plan_talk()
 
         # Swap OBS scenes in and out of review.  On its own thread: the OBS
         # connect/switch must not stall the channel reader (review_begin
@@ -771,6 +789,8 @@ class CoderBridgeApp():
         self.barged = False
         if self.handle_dictation(text):
             return
+        if self.handle_plan_talk(text, source):
+            return
         message = {"author": self.manager.streamer_name, "text": text, "source": source}
         code_ch = self.manager.code_character
         reviewer = self.reviewer()
@@ -880,7 +900,7 @@ class CoderBridgeApp():
         """Unmute once the last dictated lines have come back through chat,
         unless another dictation has started by then."""
         def unmute():
-            if self.dictation is None:
+            if self.dictation is None and not self.plan_talk:
                 self.mute_for_dictation(False)
         timer = Timer(DICTATION_UNMUTE_DELAY, unmute)
         timer.daemon = True
@@ -909,11 +929,14 @@ class CoderBridgeApp():
         if re.search(end, text.strip(), re.IGNORECASE):
             request = " ".join(self.dictation).strip()
             self.dictation = None
-            self.unmute_after_dictation()
             self.broadcast_to_viewers({"type": "dictation", "state": "sent", "text": request})
             if request:
                 self.log.info(f"Dictation sent: {request}")
                 self.send_utterance(request, "dictation")
+                # Stay muted: the plan talk that follows is dictated too.
+                self.plan_talk = True
+            else:
+                self.unmute_after_dictation()
             return True
         if re.search(cancel, text.strip(), re.IGNORECASE):
             self.log.info("Dictation cancelled")
@@ -927,6 +950,29 @@ class CoderBridgeApp():
         self.dictation.append(text.strip())
         self.broadcast_to_viewers(self.dictation_message("active"))
         return True
+
+    # --- Plan talk after a dictation ---
+    # Once a dictated request is sent, the back-and-forth on its plan is
+    # dictated too: each line goes to the coder without naming it, until
+    # "go" or "cancel" (both forwarded, so the coder acts on them).  "Off the
+    # record ..." lines are for chat and go nowhere.
+
+    def handle_plan_talk(self, text, source):
+        """Returns True when the line belonged to an open plan talk."""
+        if not self.plan_talk or self.mode not in ("plan", "idle"):
+            return False
+        if OFF_RECORD.match(text):
+            self.log.debug(f"plan talk: off the record: {text}")
+            return True
+        if match_plan_go(text) or match_plan_cancel(text):
+            self.end_plan_talk()
+        self.send_utterance(text, source)
+        return True
+
+    def end_plan_talk(self):
+        self.log.info("Plan talk ended")
+        self.plan_talk = False
+        self.unmute_after_dictation()
 
     def is_stop(self, text):
         """The one spoken interrupt: "Dyson, stop" (or "stop, Dyson"), with

@@ -475,6 +475,47 @@ def test_unmute_waits_for_chat_echo_and_skips_if_dictating_again(monkeypatch):
     assert "bobby" in manager.suppressed  # the stale unmute didn't fire
 
 
+def start_plan_talk(bridge):
+    bridge.handle_state({"type": "state", "mode": "plan"})
+    bridge.route_utterance("Dyson, here's my change request: add a dark mode.", "microphone")
+    bridge.route_utterance("Okay Dyson, begin.", "microphone")
+
+
+def test_plan_talk_forwards_unaddressed_replies_until_go(monkeypatch):
+    monkeypatch.setattr("coder_bridge.DICTATION_UNMUTE_DELAY", 0)
+    bridge, manager, channel, _ = make_bridge([])
+    start_plan_talk(bridge)
+    bridge.route_utterance("Keep it to the console page.", "microphone")
+    bridge.route_utterance("Off the record, chat, this is going great.", "microphone")
+    assert "bobby" in manager.suppressed  # still dictating, so still muted
+    bridge.route_utterance("Okay Dyson, go.", "microphone")
+    texts = [u["text"] for u in channel.of("utterance")]
+    assert texts == ["add a dark mode.", "Keep it to the console page.", "Okay Dyson, go."]
+    assert not bridge.plan_talk
+    import time
+    time.sleep(0.1)  # the delayed unmute
+    assert "bobby" not in manager.suppressed
+    bridge.route_utterance("Keep it to the console page.", "microphone")
+    assert len(channel.of("utterance")) == 3  # back to normal addressing
+
+
+def test_plan_talk_cancel_is_forwarded_and_ends_it():
+    bridge, _, channel, _ = make_bridge([])
+    start_plan_talk(bridge)
+    bridge.route_utterance("Forget about it.", "microphone")
+    assert channel.of("utterance")[-1]["text"] == "Forget about it."
+    assert not bridge.plan_talk
+
+
+def test_plan_talk_ends_when_the_coder_starts_building():
+    bridge, _, channel, _ = make_bridge([])
+    start_plan_talk(bridge)
+    bridge.handle_state({"type": "state", "mode": "implement", "chunk": 1, "chunks": 2})
+    assert not bridge.plan_talk
+    bridge.route_utterance("Nice.", "microphone")
+    assert len(channel.of("utterance")) == 1
+
+
 def test_bare_go_reaches_the_coder_only_while_planning():
     bridge, _, channel, _ = make_bridge([])
     bridge.handle_state({"type": "state", "mode": "plan"})
