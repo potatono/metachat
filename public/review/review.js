@@ -100,6 +100,12 @@ class ReviewPage {
         this.el.hunk.textContent =
             (msg.index && msg.total) ? `hunk ${msg.index}/${msg.total}` : '';
         this.setCaption(this.coder, msg.summary || '');
+        // The summary opens the hunk's thread too, so it's still readable
+        // once the reviewer's reply replaces the caption.  Only the first
+        // visit: going back to a hunk keeps the thread it already has.
+        if (msg.summary && !this.threadByHunk.has(msg.index)) {
+            this.pushFor(this.threadByHunk, { speaker: this.coder, text: msg.summary });
+        }
 
         this.showingWorkbench = false;
         this.el.diff.classList.remove('empty');
