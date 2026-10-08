@@ -4,6 +4,24 @@ Claude Code channel server for voice pair programming with Dyson.
 Runs on the code host (porcupine / WSL2 / SSH host); dials out to metachat's
 coder bridge on anarchy. Design: `docs/PAIR_PROGRAMMING_PLAN.md`.
 
+## Quick setup (code host)
+
+From the root of the project to pair on, with bun, python3, git and claude
+already installed:
+
+```bash
+curl -fsSL http://anarchy:9000/setup/channel.sh | bash
+```
+
+```powershell
+irm http://anarchy:9000/setup/channel.ps1 | iex
+```
+
+This pulls the channel into `~/.metachat/channel` and does everything under
+"Setup" and "Installing into a target project" below. It prompts for the
+bridge URL and token (or set `METACHAT_BRIDGE_URL` / `METACHAT_BRIDGE_TOKEN`).
+Re-run it to update.
+
 ## Setup (code host)
 
 ```bash

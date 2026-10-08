@@ -32,7 +32,11 @@ function claude(args: string[]): number {
 // Reads a line without echoing it; the token must never show on stream.
 async function promptSecret(question: string): Promise<string> {
   const stdin = process.stdin;
-  if (!stdin.isTTY) return prompt(question) ?? "";
+  if (!stdin.isTTY) {
+    const value = prompt(question);
+    if (value === null) throw new Error("no terminal to prompt on; set METACHAT_BRIDGE_TOKEN");
+    return value;
+  }
 
   process.stdout.write(`${question} `);
   stdin.setRawMode(true);

@@ -44,8 +44,12 @@ main() {
   trap - EXIT
 
   # The installer prompts for the bridge token; stdin is the pipe, so give
-  # it the terminal.
-  bun run "$home_dir/channel/setup/install.ts" "$project_dir" </dev/tty
+  # it the terminal when there is one (else it relies on env overrides).
+  if (exec </dev/tty) 2>/dev/null; then
+    bun run "$home_dir/channel/setup/install.ts" "$project_dir" </dev/tty
+  else
+    bun run "$home_dir/channel/setup/install.ts" "$project_dir" </dev/null
+  fi
 }
 
 main "$@"
