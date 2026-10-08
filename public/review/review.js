@@ -75,11 +75,12 @@ class ReviewPage {
         this.el.caption.textContent = msg.summary || '';
 
         this.el.diff.classList.remove('empty');
-        if (msg.content !== undefined) {
-            // whole_file view: plain content instead of a diff
+        if (msg.content !== undefined || typeof Diff2Html === 'undefined') {
+            // whole_file view, or diff2html failed to load from the CDN:
+            // show plain text rather than nothing.
             const pre = document.createElement('pre');
             pre.className = 'whole-file';
-            pre.textContent = msg.content;
+            pre.textContent = (msg.content !== undefined) ? msg.content : (msg.diff || '');
             this.el.diff.replaceChildren(pre);
         } else {
             this.el.diff.innerHTML = Diff2Html.html(this.withHeader(msg), {

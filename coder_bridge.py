@@ -13,12 +13,17 @@ from eventbus import eventbus, Events
 from obs import ObsApp
 
 # Spoken review-navigation commands, handled without a model round trip.
+# "chuck" is a common STT mishearing of "chunk".
+_UNIT = r"(?:chunk|hunk|chuck|change|one)"
 NAV_PATTERNS = [
-    ("next", r"(?:next|go on|keep going|continue)"),
-    ("back", r"(?:back|go back|previous)"),
-    ("more_context", r"(?:more context|zoom out|show (?:me )?more)"),
-    ("whole_file", r"(?:(?:show )?(?:the )?whole file|full file)"),
-    ("approve", r"(?:approve[d]?|looks good|ship it|l\.?g\.?t\.?m\.?)"),
+    ("next", rf"(?:next(?: {_UNIT})?|go on|keep going|continue"
+             rf"|move (?:on|onto|on to)(?: the)?(?: next)?(?: {_UNIT})?)"),
+    ("back", rf"(?:(?:go )?back|previous(?: {_UNIT})?|last {_UNIT})"),
+    ("more_context", r"(?:(?:show (?:me )?)?more context|zoom out|show (?:me )?more)"),
+    ("whole_file", r"(?:(?:show )?(?:me )?(?:the )?whole file|full file)"),
+    ("approve", rf"(?:(?:i )?approved?(?: (?:this|the|that))?(?: {_UNIT})?"
+                rf"|(?:this |the |that )?{_UNIT} looks good(?: to me)?"
+                rf"|looks good(?: to me)?|ship it|l\.?g\.?t\.?m\.?)"),
     # Handled locally by the review page, not sent to the channel.
     ("scroll_down", r"(?:scroll down|down a bit)"),
     ("scroll_up", r"(?:scroll up|up a bit)"),
@@ -26,9 +31,20 @@ NAV_PATTERNS = [
 
 VIEWER_NAV = {"scroll_down", "scroll_up"}
 
+# Leading interjections that voice input tends to carry ("All right, next").
+FILLER = re.compile(r"^(?:okay|ok|all right|alright|yeah|yes|so|um|uh|dyson)[,\s]+")
+
 def match_nav(text):
-    """Return the nav action for a bare navigation utterance, else None."""
-    cleaned = text.strip().strip(".!,").strip().lower()
+    """Return the nav action for a navigation utterance, else None.
+
+    Matching is anchored (fullmatch after stripping filler/punctuation), so
+    sentences that merely contain a nav word stay review comments."""
+    cleaned = re.sub(r"[.!?,]+$", "", text.strip().lower()).strip()
+    while True:
+        stripped = FILLER.sub("", cleaned)
+        if stripped == cleaned:
+            break
+        cleaned = stripped
     for action, pattern in NAV_PATTERNS:
         if re.fullmatch(pattern, cleaned):
             return action
@@ -277,20 +293,26 @@ class CoderBridgeApp():
             elif previous == "review":
                 rev.set_send_timeout(None)
 
-        # Swap OBS scenes in and out of review.
+        # Swap OBS scenes in and out of review.  On its own thread: the OBS
+        # connect/switch must not stall the channel reader (review_begin
+        # sends the first hunk right behind the state change).
         if self.obs:
-            try:
-                self.obs.ensure_connected()
-                if current == "review":
-                    self.saved_scene = self.obs.get_current_scene_name()
-                    self.obs.set_current_scene_name(self.review_scene)
-                elif previous == "review" and self.saved_scene:
-                    self.obs.set_current_scene_name(self.saved_scene)
-                    self.saved_scene = None
-            except Exception as ex:
-                self.log.error("OBS scene switch failed", exc_info=ex)
+            Thread(daemon=True, target=self.switch_obs_scene, args=(previous, current)).start()
+
+    def switch_obs_scene(self, previous, current):
+        try:
+            self.obs.ensure_connected()
+            if current == "review":
+                self.saved_scene = self.obs.get_current_scene_name()
+                self.obs.set_current_scene_name(self.review_scene)
+            elif previous == "review" and self.saved_scene:
+                self.obs.set_current_scene_name(self.saved_scene)
+                self.saved_scene = None
+        except Exception as ex:
+            self.log.error("OBS scene switch failed", exc_info=ex)
 
     def handle_hunk(self, msg):
+        self.log.info(f"hunk {msg.get('index')}/{msg.get('total')}: {msg.get('file')}")
         self.current_hunk = msg
         self.broadcast_to_viewers(msg)
 
@@ -392,6 +414,12 @@ class CoderBridgeApp():
             "text": text,
             "ts": time.time(),
         })
+        # Dyson is suppressed while a session is connected, so the normal
+        # addressed-ack never fires; ack here so the streamer knows the
+        # utterance was captured (the reply may be a while if Claude is
+        # mid-turn, since channel events queue).
+        if sent and self.avatar:
+            self.avatar.ack(character=self.code_character_name())
         if sent and self.mode == "review":
             self.broadcast_to_viewers({"type": "comment", "text": text})
 
@@ -404,8 +432,15 @@ class CoderBridgeApp():
             connected = self.active is not None
         if not connected or not self.avatar:
             return
-        if getattr(self.avatar, "is_talking", False) or getattr(self.avatar, "queue", None):
+
+        # Only barge when the code character is the one speaking or queued;
+        # talking over Bobby is none of our business.
+        code = self.code_character_name()
+        speaking = (getattr(self.avatar, "is_talking", False)
+                    and getattr(getattr(self.avatar, "current", None), "name", None) == code)
+        queued = any(q[0] == code for q in getattr(self.avatar, "queue", []))
+        if speaking or queued:
             self.barged = True
             self.log.info("Barge-in: stopping coder speech")
-            self.avatar.stop(self.code_character_name())
+            self.avatar.stop(code)
             self.send_to_channel({"type": "barge_in"})
