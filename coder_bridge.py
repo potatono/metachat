@@ -284,6 +284,8 @@ class CoderBridgeApp():
                 replay.append(self.current_hunk)
             if self.dictation is not None:
                 replay.append(self.dictation_message("active"))
+            elif self.plan_talk:
+                replay.append(self.dictation_message("plan"))
             if self.last_edit:
                 replay.append(self.last_edit)
         with self.debate_lock:
@@ -935,6 +937,7 @@ class CoderBridgeApp():
                 self.send_utterance(request, "dictation")
                 # Stay muted: the plan talk that follows is dictated too.
                 self.plan_talk = True
+                self.broadcast_to_viewers(self.dictation_message("plan"))
             else:
                 self.unmute_after_dictation()
             return True
@@ -973,6 +976,7 @@ class CoderBridgeApp():
         self.log.info("Plan talk ended")
         self.plan_talk = False
         self.unmute_after_dictation()
+        self.broadcast_to_viewers(self.dictation_message("ended"))
 
     def is_stop(self, text):
         """The one spoken interrupt: "Dyson, stop" (or "stop, Dyson"), with

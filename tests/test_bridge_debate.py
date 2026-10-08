@@ -374,7 +374,8 @@ def test_dictated_change_request_is_captured_then_sent_as_one():
     assert len(sent) == 1 and sent[0]["source"] == "dictation"
     assert sent[0]["text"] == ("add a dark mode. It should remember the choice. "
                                "Dyson, do you hear me?")
-    assert viewer.of("dictation")[-1]["state"] == "sent"
+    # Sent, and the talk about its plan is still dictated.
+    assert [f["state"] for f in viewer.of("dictation")[-2:]] == ["sent", "plan"]
     assert bridge.dictation is None
 
 
@@ -500,11 +501,26 @@ def test_plan_talk_forwards_unaddressed_replies_until_go(monkeypatch):
 
 
 def test_plan_talk_cancel_is_forwarded_and_ends_it():
-    bridge, _, channel, _ = make_bridge([])
+    bridge, _, channel, viewer = make_bridge([])
     start_plan_talk(bridge)
+    assert viewer.of("dictation")[-1]["state"] == "plan"
     bridge.route_utterance("Forget about it.", "microphone")
     assert channel.of("utterance")[-1]["text"] == "Forget about it."
     assert not bridge.plan_talk
+    assert viewer.of("dictation")[-1]["state"] == "ended"
+
+
+def test_page_connecting_mid_plan_talk_sees_it_open():
+    bridge, _, _, _ = make_bridge([])
+    start_plan_talk(bridge)
+
+    class ScriptedWs(FakeWs):
+        def __iter__(self):
+            return iter([])
+
+    late = ScriptedWs()
+    bridge.handle_viewer(late)
+    assert late.of("dictation")[-1]["state"] == "plan"
 
 
 def test_plan_talk_ends_when_the_coder_starts_building():

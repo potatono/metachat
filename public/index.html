@@ -21,11 +21,12 @@
     </main>
 
     <!-- A spoken change request being dictated ("Dyson, here's my change
-         request" ... "Okay Dyson, begin"), shown live as it's captured. -->
+         request" ... "Okay Dyson, begin"), shown live as it's captured.
+         Stays up, relabelled, while the plan it started is talked through. -->
     <section id="dictation" class="hidden">
         <div class="dictation-head">
-            <span class="rec"></span> Dictating a change request
-            <span class="hint">say &ldquo;Okay Dyson, begin&rdquo; to send, &ldquo;Dyson, cancel&rdquo; to drop it</span>
+            <span class="rec"></span> <span id="dictation-label">Dictating a change request</span>
+            <span id="dictation-hint" class="hint">say &ldquo;Okay Dyson, begin&rdquo; to send, &ldquo;Dyson, cancel&rdquo; to drop it</span>
         </div>
         <div id="dictation-text"></div>
     </section>

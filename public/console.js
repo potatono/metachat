@@ -17,7 +17,8 @@ class ConsolePage {
     constructor() {
         this.el = {};
         for (const id of ['mode', 'chunk', 'label', 'status', 'log', 'empty',
-                          'composer', 'input', 'dictation', 'dictation-text']) {
+                          'composer', 'input', 'dictation', 'dictation-text',
+                          'dictation-label', 'dictation-hint']) {
             this.el[id] = document.getElementById(id);
         }
         this.coder = 'dyson';
@@ -107,7 +108,15 @@ class ConsolePage {
 
     onDictation(msg) {
         const active = msg.state === 'active';
-        this.el.dictation.classList.toggle('hidden', !active);
+        // 'plan': the request went out and the talk about its plan is still
+        // dictated, so every line goes to the coder until go or cancel.
+        const plan = msg.state === 'plan';
+        this.el.dictation.classList.toggle('hidden', !active && !plan);
+        this.el['dictation-label'].textContent = plan
+            ? 'Talking through the plan' : 'Dictating a change request';
+        this.el['dictation-hint'].textContent = plan
+            ? 'say \u201cgo\u201d to approve, \u201ccancel\u201d to drop it, \u201coff the record\u201d for chat'
+            : 'say \u201cOkay Dyson, begin\u201d to send, \u201cDyson, cancel\u201d to drop it';
         this.el['dictation-text'].textContent = active ? (msg.text || '\u2026') : '';
         // A sent request arrives as a chat line; only a dropped one needs noting.
         if (msg.state === 'cancelled') this.appendStep('Dictated request cancelled');
