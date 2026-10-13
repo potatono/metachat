@@ -175,3 +175,7 @@ cython_debug/
 
 # Node stuff for channel
 node_modules/
+
+.claude/
+./chatbot-dyson-history.json
+
