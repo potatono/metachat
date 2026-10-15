@@ -5,7 +5,7 @@
     --text: #e8e8e8;
     --dim: #9a9a9a;
     --accent: #8f7bd8;   /* dyson purple */
-    --bobby: #d7833a;    /* bobby orange (matches his avatar background) */
+    --bobby: #d7833a;    /* bobby orange (matches her avatar background) */
     --streamer: #6fbf73;
     --ok: #4caf50;
     --warn: #e0a030;
@@ -331,3 +331,108 @@ footer {
     from { opacity: 0; transform: translate(-50%, -50%) rotate(-18deg) scale(2.2); }
     to   { opacity: 0.92; transform: translate(-50%, -50%) rotate(-18deg) scale(1); }
 }
+
+/* Label mode: the image as big as the area allows, the label set below it.
+   Each label shows who picked it; the streamer's call is lit up. */
+.labeler {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8em;
+    height: 100%;
+}
+.label-instructions {
+    color: var(--dim);
+    font-size: 1.05em;
+}
+.label-image {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 0.4em;
+}
+.label-image img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    image-rendering: auto;
+}
+.label-image.missing {
+    color: var(--dim);
+    font-style: italic;
+}
+.label-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6em;
+}
+.label-option {
+    flex: 1 1 10em;
+    padding: 0.5em 0.8em;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 0.4em;
+}
+.label-option.decided {
+    border-color: var(--streamer);
+    background: #1f3321;
+}
+.label-name {
+    font-size: 1.4em;
+    font-weight: 700;
+}
+.label-desc {
+    color: var(--dim);
+    font-size: 0.85em;
+}
+.label-who {
+    display: flex;
+    gap: 0.4em;
+    min-height: 1.4em;
+    margin-top: 0.3em;
+}
+.label-tag {
+    font-size: 0.75em;
+    font-weight: 700;
+    padding: 0.1em 0.5em;
+    border-radius: 0.3em;
+    color: #101010;
+}
+.label-tag.speaker-dyson { background: var(--accent); }
+.label-tag.speaker-bobby { background: var(--bobby); }
+.label-flags {
+    float: right;
+    color: var(--streamer);
+    font-weight: 700;
+}
+.label-flag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+    align-items: center;
+}
+.label-flag-list::before {
+    content: "flags";
+    color: var(--dim);
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-right: 0.3em;
+}
+.label-flag {
+    padding: 0.1em 0.6em;
+    border: 1px solid var(--border);
+    border-radius: 1em;
+    color: var(--dim);
+}
+.label-flag.on {
+    border-color: var(--streamer);
+    color: var(--text);
+    background: #1f3321;
+}
+#diff:has(.labeler) { height: 100%; }
+/* No debate thread while labeling: the image gets the full width. */
+body.label-mode main#diff-container { grid-column: 1 / -1; }

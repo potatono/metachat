@@ -38,6 +38,27 @@ NAV_PATTERNS = [
 
 VIEWER_NAV = {"scroll_down", "scroll_up"}
 
+# Modes where the bridge owns the second reviewer's voice and the stream
+# shows the review page.
+REVIEW_MODES = ("review", "label")
+
+# While labeling: skipping an image, and going with someone's pick
+# ("go with Bobby", "Dyson's right", "agree with Dyson").
+LABEL_SKIP = r"(?:skip(?: (?:it|this|that|this one|that one))?|pass|no label)"
+# Asking the coder and reviewer to look (blind mode keeps them out until then).
+LABEL_HELP = (r"(?:i (?:can't|cannot|can not) tell|i (?:don't|do not) know|(?:i'm )?not sure"
+              r"|what do (?:you|you guys|you two|y'all) think)")
+LABEL_GO_WITH = (r"(?:(?:i'll |let's |i'd )?(?:go|going) with|agree with|same as|i'm with)"
+                 r" (\w+)(?:'s(?: (?:pick|label|call|answer))?)?"
+                 r"|(\w+)(?:'s| is) (?:right|correct)")
+# Ending a labeling pass early.  Review's "looks good" is too easy to say
+# about a pick to mean "stop here".
+LABEL_DONE = (r"(?:(?:i'm |we're )?done(?: labell?ing)?|(?:that's|that is) (?:it|all)"
+              r"|stop labell?ing|finish(?: labell?ing)?)")
+
+# Largest frame the bridge accepts (label mode's inline images).
+MAX_FRAME_BYTES = 16 * 1024 * 1024
+
 # Chat lines kept for pages that connect (or reconnect) mid-conversation.
 CHAT_HISTORY = 200
 
@@ -48,6 +69,8 @@ DICTATION_UNMUTE_DELAY = 4.0
 # Leading interjections that voice input tends to carry ("All right, next"),
 # and trailing ones ("looks good to me too", "next please").
 FILLER = re.compile(r"^(?:okay|ok|all right|alright|yeah|yes|so|um|uh|dyson)[,\s]+")
+# The same leading interjections, without the coder's name.
+LEAD_FILLER = re.compile(r"^(?:okay|ok|all right|alright|yeah|yes|so|um|uh)[,\s]+")
 TRAILER = re.compile(r"[,\s]+(?:too|as well|then|please|thanks|dyson)$")
 
 # Approving a proposed plan out loud ("go", "let's do it"); review-style
@@ -59,6 +82,63 @@ PLAN_CANCEL = (r"(?:cancel(?: that| it| the plan)?|forget (?:about )?it|never ?m
                r"|scratch that)")
 # A line that starts like this is for chat, not for the open plan.
 OFF_RECORD = re.compile(r"^\W*off the record\b", re.IGNORECASE)
+
+
+def option_names(options):
+    """Lowercased name -> name as the task spells it."""
+    return {str(o.get("name", "")).lower(): o["name"] for o in options if o.get("name")}
+
+
+def parse_call(cleaned, labels, flags):
+    """A spoken call ("unclear, blurry", "neutral") as (label, [flags]) in the
+    task's spelling, or None unless every word is the label or a flag."""
+    words = [w for w in re.split(r"[,\s]+", cleaned) if w and w not in ("and", "with", "plus")]
+    label_names, flag_names = option_names(labels), option_names(flags)
+
+    def longest(names, at):
+        for end in range(len(words), at, -1):
+            name = names.get(" ".join(words[at:end]))
+            if name:
+                return name, end
+        return None, at
+
+    label, at = longest(label_names, 0)
+    if not label:
+        return None
+    found = []
+    while at < len(words):
+        flag, at_next = longest(flag_names, at)
+        if not flag:
+            return None
+        if flag not in found:
+            found.append(flag)
+        at = at_next
+    return label, found
+
+
+def parse_label(text, labels, flags=()):
+    """Split a label reply into (spoken_text, "label:flag").  The label is
+    None when the reply didn't name one of the labels, or named an unknown
+    flag."""
+    if not text:
+        return "", None
+    match = LABEL_RE.search(text)
+    if not match:
+        return text.strip(), None
+    parts = [p.strip().lower() for p in re.split(r"[:,]", match.group(1)) if p.strip()]
+    label_names, flag_names = option_names(labels), option_names(flags)
+    if not parts or parts[0] not in label_names or any(p not in flag_names for p in parts[1:]):
+        return text[:match.start()].strip(), None
+    value = [label_names[parts[0]]]
+    for p in parts[1:]:
+        if flag_names[p] not in value:
+            value.append(flag_names[p])
+    return text[:match.start()].strip(), ":".join(value)
+
+
+def spoken_label(value):
+    """"unclear:blurry" as it's said: "unclear, blurry"."""
+    return ", ".join(value.split(":"))
 
 
 def clean_utterance(text):
@@ -114,6 +194,14 @@ PLAN_PROMPT = (
     "spoken sentence, no code: approve it, or name the single biggest concern. "
     "Then on a new line write STANCE: approve or STANCE: concern. If it isn't a "
     "plan (a question, a status update, small talk), reply with just SKIP.")
+# The second reviewer's own label for an image.  She doesn't hear the coder's
+# pick first, so the two are independent.  The LABEL line is parsed off.
+LABEL_PROMPT = (
+    "Give your own label for this image in one short spoken sentence: name "
+    "the label and say why, no file names. Then on a new line write LABEL: "
+    "followed by exactly one of the label names, plus any flags that apply "
+    "after colons (LABEL: name:flag). Usually no flags.")
+LABEL_RE = re.compile(r"\s*\**\blabel\b\**\s*[:=]\s*\**([^\n*]+?)\**\W*$", re.IGNORECASE)
 # The coder speaks a sentence at a time; a plan is done once it pauses this long.
 PLAN_SETTLE = 3.0
 
@@ -181,6 +269,12 @@ class CoderBridgeApp():
         # Readable "what the coder is doing" line from the tool hooks.
         self.activity_label = None
         self.current_hunk = None
+        # The image being labeled; whose pick is whose for "go with ..." by
+        # (task, index); and the images already looked at (spoken, or asked
+        # about when blind).
+        self.current_label_item = None
+        self.label_picks = {}
+        self.labeled = set()
         self.barged = False
         self.saved_scene = None
         self.obs = ObsApp() if self.review_scene else None
@@ -246,7 +340,10 @@ class CoderBridgeApp():
     def run_server(self):
         self.log.info(f"Starting coder bridge on {self.address}:{self.port}...")
         try:
-            with wbs_serve(self.handle_connect, self.address, self.port) as server:
+            # Label mode sends images inline; the default 1 MiB frame limit
+            # is too small for a photo.
+            with wbs_serve(self.handle_connect, self.address, self.port,
+                           max_size=MAX_FRAME_BYTES) as server:
                 self.server = server
                 server.serve_forever()
         except Exception as ex:
@@ -282,6 +379,8 @@ class CoderBridgeApp():
             replay.append(self.state_message())
             if self.current_hunk:
                 replay.append(self.current_hunk)
+            if self.mode == "label" and self.current_label_item:
+                replay.append(self.current_label_item)
             if self.dictation is not None:
                 replay.append(self.dictation_message("active"))
             elif self.plan_talk:
@@ -371,11 +470,15 @@ class CoderBridgeApp():
             self.handle_state(msg)
         elif mtype == "hunk":
             self.handle_hunk(msg)
+        elif mtype == "label_item":
+            self.handle_label_item(msg)
+        elif mtype == "label_suggestion":
+            self.handle_label_suggestion(msg)
         elif mtype == "turn":
             self.handle_turn(msg)
         elif mtype == "vocab":
             self.handle_vocab(msg)
-        elif mtype in ("activity", "review_result"):
+        elif mtype in ("activity", "review_result", "label_result"):
             # An edit diff or test result from the coder's tool hooks, or a
             # finished review's verdict; only the pages show these.
             with self.session_lock:
@@ -443,26 +546,30 @@ class CoderBridgeApp():
         # Faster voice turnaround during review.
         rev = self.streamer.rev if self.streamer else None
         if rev:
-            if current == "review":
+            if current in REVIEW_MODES:
                 rev.set_send_timeout(self.review_send_timeout)
-            elif previous == "review":
+            elif previous in REVIEW_MODES:
                 rev.set_send_timeout(None)
 
         # In review the bridge owns the second reviewer's voice too: no
         # ambient chat replies in the middle of a debate.
         reviewer = self.reviewer()
         if reviewer and self.manager:
-            if current == "review":
+            if current in REVIEW_MODES:
                 self.manager.suppress(reviewer.character, "review")
-            elif previous == "review":
+            elif previous in REVIEW_MODES:
                 self.manager.unsuppress(reviewer.character, "review")
+        if previous == "label":
+            self.current_label_item = None
+            self.label_picks = {}
+            self.labeled.clear()
         if previous == "review":
             self.cancel_debate()
             self.review_id = None
             self.reviewed.clear()
 
         # Building or reviewing means the plan talk is over, however it ended.
-        if self.plan_talk and current in ("implement", "review"):
+        if self.plan_talk and current in ("implement", *REVIEW_MODES):
             self.end_plan_talk()
 
         # Swap OBS scenes in and out of review.  On its own thread: the OBS
@@ -474,10 +581,10 @@ class CoderBridgeApp():
     def switch_obs_scene(self, previous, current):
         try:
             self.obs.ensure_connected()
-            if current == "review":
+            if current in REVIEW_MODES and previous not in REVIEW_MODES:
                 self.saved_scene = self.obs.get_current_scene_name()
                 self.obs.set_current_scene_name(self.review_scene)
-            elif previous == "review" and self.saved_scene:
+            elif previous in REVIEW_MODES and current not in REVIEW_MODES and self.saved_scene:
                 self.obs.set_current_scene_name(self.saved_scene)
                 self.saved_scene = None
         except Exception as ex:
@@ -506,6 +613,173 @@ class CoderBridgeApp():
         if self.avatar and msg.get("summary"):
             self.avatar.say(msg["summary"], character=self.code_character_name())
         self.begin_debate(msg)
+
+    def label_key(self, item):
+        return (item.get("task"), item.get("index"))
+
+    def current_picks(self):
+        """Whose pick is whose for the image on screen, as "label:flag" values."""
+        item = self.current_label_item
+        return self.label_picks.setdefault(self.label_key(item), {}) if item else {}
+
+    def handle_label_item(self, msg):
+        index = msg.get("index")
+        self.log.info(f"label {index}/{msg.get('total')}: {msg.get('file')}")
+        self.current_label_item = msg
+        coder = self.code_character_name()
+        if msg.get("suggestion"):
+            self.current_picks()[coder] = msg["suggestion"]
+        self.broadcast_to_viewers(msg)
+
+        # Blind, nobody looks until the streamer asks; otherwise the coder's
+        # pick is spoken and the reviewer looks, once per image.
+        key = self.label_key(msg)
+        if msg.get("blind") or key in self.labeled:
+            return
+        self.labeled.add(key)
+        if msg.get("suggestion"):
+            self.say_coder_pick(msg["suggestion"], msg.get("note"))
+        self.ask_label_reviewer_async(msg)
+
+    def handle_label_suggestion(self, msg):
+        """The coder's pick after the streamer asked for help (blind)."""
+        item = self.current_label_item
+        if not item or (msg.get("task"), msg.get("index")) != self.label_key(item):
+            self.log.info("Dropping stale coder label pick")
+            return
+        coder = self.code_character_name()
+        self.current_picks()[coder] = msg.get("label", "")
+        self.log.info(f"{coder} labels {msg.get('label')}")
+        self.say_coder_pick(msg.get("label", ""), msg.get("note"))
+        self.broadcast_to_viewers({"type": "label_pick", "speaker": coder, "label": msg.get("label"),
+                                   "text": msg.get("note", ""), "index": msg.get("index")})
+
+    def say_coder_pick(self, value, note=None):
+        if not self.avatar:
+            return
+        line = f"I'd say {spoken_label(value)}."
+        if note:
+            line += f" {note}"
+        self.avatar.say(line, character=self.code_character_name())
+
+    def ask_for_label_help(self):
+        """"I can't tell": blind, the coder and the reviewer look now, once."""
+        item = self.current_label_item
+        if not item or not item.get("blind"):
+            return
+        key = self.label_key(item)
+        if key in self.labeled:
+            return
+        self.labeled.add(key)
+        self.log.info(f"label: help asked on {item.get('index')}")
+        if self.avatar:
+            self.avatar.ack(character=self.code_character_name())
+        self.send_to_channel({"type": "label_help"})
+        self.ask_label_reviewer_async(item)
+
+    def ask_label_reviewer_async(self, item):
+        if self.reviewer():
+            Thread(daemon=True, target=self.ask_label_reviewer, args=(item,)).start()
+
+    def ask_label_reviewer(self, item):
+        """The second reviewer looks at the image and gives her own pick."""
+        reviewer = self.reviewer()
+        context = {
+            "type": "review",
+            "label_item": item,
+            "coder": self.code_character_name(),
+            "reviewer": reviewer.character,
+            "prompt": LABEL_PROMPT,
+        }
+
+        def on_thinking(summary):
+            self.broadcast_to_viewers({"type": "thinking", "speaker": reviewer.character,
+                                       "text": summary})
+
+        on_thinking("")
+        try:
+            response = reviewer.chatgpt.get_response([], context, on_thinking=on_thinking)
+        except Exception as ex:
+            self.log.error("Label reviewer LLM call failed", exc_info=ex)
+            response = None
+        finally:
+            self.broadcast_to_viewers({"type": "thinking", "speaker": reviewer.character,
+                                       "done": True})
+
+        text, label = parse_label(response, item.get("labels", []), item.get("flags", []))
+        if not label:
+            self.log.error(f"Label reviewer gave no usable label: {response!r}")
+            return
+        # Moved on while she was looking: her pick is for another image.
+        current = self.current_label_item
+        if self.mode != "label" or not current or self.label_key(current) != self.label_key(item):
+            self.log.info("Dropping stale label pick")
+            return
+        self.current_picks()[reviewer.character] = label
+        self.log.info(f"{reviewer.character} labels {label}: {text}")
+        self.speak_as(reviewer, text)
+        self.broadcast_to_viewers({"type": "label_pick", "speaker": reviewer.character,
+                                   "label": label, "text": text, "index": item.get("index")})
+        # The second opinion goes in the coder's results too.
+        self.send_to_channel({"type": "label_pick", "from": reviewer.character, "label": label})
+
+    def match_label(self, text):
+        """The streamer's call on the current image: (label, flags, by),
+        "skip", "help", "done", or None when the line isn't one."""
+        item = self.current_label_item
+        if not item:
+            return None
+        cleaned = clean_utterance(text)
+        for word, pattern in (("skip", LABEL_SKIP), ("help", LABEL_HELP), ("done", LABEL_DONE)):
+            if re.fullmatch(pattern, cleaned):
+                return word
+        call = parse_call(cleaned, item.get("labels", []), item.get("flags", []))
+        if call:
+            return (*call, self.manager.streamer_name)
+        # Not clean_utterance: it would strip the coder's name off "go with Dyson".
+        plain = re.sub(r"[.!?,]+$", "", text.strip().lower())
+        m = re.fullmatch(LABEL_GO_WITH, LEAD_FILLER.sub("", plain))
+        if m:
+            who = m.group(1) or m.group(2)
+            picks = self.current_picks()
+            for character, nicknames in self.pickers():
+                if re.fullmatch(nicknames, who, re.IGNORECASE) and character in picks:
+                    label, *flags = picks[character].split(":")
+                    return (label, flags, character)
+        return None
+
+    def pickers(self):
+        """(character, nickname pattern) for each character that picks labels."""
+        pickers = [(self.code_character_name(), self.manager.code_character.nicknames)]
+        reviewer = self.reviewer()
+        if reviewer:
+            pickers.append((reviewer.character, reviewer.nicknames))
+        return pickers
+
+    def route_label_utterance(self, text, source, message):
+        nav = match_nav(text)
+        if nav in ("next", "back"):
+            self.log.info(f"label nav: {nav}")
+            self.send_to_channel({"type": "nav", "action": nav})
+            return
+        call = self.match_label(text)
+        if call == "help":
+            self.ask_for_label_help()
+            return
+        if call in ("skip", "done"):
+            self.log.info(f"label: {call}")
+            self.send_to_channel({"type": "nav", "action": "next" if call == "skip" else "approve"})
+            return
+        if call:
+            label, flags, by = call
+            value = ":".join([label, *flags])
+            self.log.info(f"label: {value} (by {by})")
+            self.broadcast_to_viewers({"type": "label_call", "label": value, "by": by})
+            self.send_to_channel({"type": "label", "label": label, "flags": flags, "by": by})
+            return
+        # Anything else is talk: it goes to the coder only when it's named.
+        if self.manager.code_character.is_activated(message):
+            self.send_utterance(text, source)
 
     def handle_turn(self, msg):
         """Dyson's debate reply (spoken separately via say frames)."""
@@ -681,13 +955,17 @@ class CoderBridgeApp():
 
     def speak_review_line(self, reviewer, text, stance):
         self.log.info(f"{reviewer.character} ({stance}): {text}")
+        self.speak_as(reviewer, text)
+        self.broadcast_to_viewers({"type": "thread", "speaker": reviewer.character,
+                                   "text": text, "stance": stance})
+
+    def speak_as(self, reviewer, text):
+        """The second reviewer says a line: chat logs, avatar, and Twitch."""
         self.chat(reviewer.character, text)
         if self.avatar:
             self.avatar.say(text, character=reviewer.character)
         if self.mirror_to_twitch and reviewer.twitch and reviewer.twitch.running:
             reviewer.twitch.say(text)
-        self.broadcast_to_viewers({"type": "thread", "speaker": reviewer.character,
-                                   "text": text, "stance": stance})
 
     def apply_debate_action(self, action):
         kind = action[0]
@@ -797,7 +1075,9 @@ class CoderBridgeApp():
         code_ch = self.manager.code_character
         reviewer = self.reviewer()
 
-        if self.mode == "review":
+        if self.mode == "label":
+            self.route_label_utterance(text, source, message)
+        elif self.mode == "review":
             nav = match_nav(text)
             if nav:
                 self.log.info(f"nav: {nav}")
@@ -1003,7 +1283,7 @@ class CoderBridgeApp():
         # none of our business.
         if self.avatar:
             ours = {self.code_character_name()}
-            if self.mode == "review" and self.reviewer_name:
+            if self.mode in REVIEW_MODES and self.reviewer_name:
                 ours.add(self.reviewer_name)
             for character in ours:
                 self.avatar.stop(character)

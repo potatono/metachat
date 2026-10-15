@@ -109,6 +109,9 @@ class CompletionApp():
                 { "role": "user", "content": f"[{coder}] {context['plan']}" },
             ]
 
+        if context.get('label_item') is not None:
+            return self.get_label_messages(context)
+
         hunk = context['hunk']
         messages = [
             {
@@ -139,6 +142,35 @@ class CompletionApp():
             messages.append({ "role":"user", "content":f"[{self.streamer}] {context['question']}" })
 
         return messages
+
+    def get_label_messages(self, context):
+        """Messages for labeling one image: the label set, what to judge, and
+        the image itself.  The coder's pick is left out so hers is her own."""
+        item = context['label_item']
+        coder = context.get('coder', 'dyson')
+        labels = '\n'.join(f"- {o['name']}" + (f": {o['description']}" if o.get('description') else '')
+                           for o in item.get('labels', []) if o.get('name'))
+        flags = '\n'.join(f"- {o['name']}" + (f": {o['description']}" if o.get('description') else '')
+                          for o in item.get('flags', []) if o.get('name'))
+        text = (f"Labels:\n{labels}\n\n"
+                + (f"Flags (only when they apply):\n{flags}\n\n" if flags else '')
+                + (f"What to judge: {item['instructions']}\n\n" if item.get('instructions') else '')
+                + f"Image {item.get('index', '?')} of {item.get('total', '?')}.")
+        content = [{"type": "input_text" if self.api == "responses" else "text", "text": text}]
+        if item.get('image'):
+            if self.api == "responses":
+                content.append({"type": "input_image", "image_url": item['image']})
+            else:
+                content.append({"type": "image_url", "image_url": {"url": item['image']}})
+        return [
+            {
+                "role": "developer",
+                "content": (f"{self.streamer} and {coder} are labeling images on stream, one at "
+                            f"a time, and {self.name} gives their own label for each one. "
+                            f"{self.streamer} makes the final call.")
+            },
+            {"role": "user", "content": content},
+        ]
 
     def get_history_times(self, history):
         clip_history = "```"

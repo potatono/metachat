@@ -14,6 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BridgeClient, type BridgeMessage } from "./bridge.ts";
 import { ReviewSession, type Hunk } from "./review.ts";
+import { LabelSession, type LabelTask } from "./label.ts";
 
 // All logging goes to stderr; stdout is the MCP protocol stream.
 const log = (line: string) => console.error(`[metachat-channel] ${line}`);
@@ -25,7 +26,7 @@ if (!BRIDGE_TOKEN) {
   log("METACHAT_BRIDGE_TOKEN is not set; the bridge will reject us.");
 }
 
-type Mode = "plan" | "implement" | "review" | "idle";
+type Mode = "plan" | "implement" | "review" | "label" | "idle";
 let mode: Mode = "idle";
 let saySeq = 0;
 
@@ -77,7 +78,29 @@ const bridge = new BridgeClient({
         break;
       }
       case "nav":
-        review.nav(String(msg.action ?? ""));
+        if (mode === "label") {
+          labeling.nav(String(msg.action ?? ""));
+        } else {
+          review.nav(String(msg.action ?? ""));
+        }
+        break;
+      case "label":
+        // The streamer's call on the current image: their own label, or a
+        // pick they went with (by names whose it was).
+        labeling.decide(
+          String(msg.label ?? ""),
+          String(msg.by ?? "streamer"),
+          Array.isArray(msg.flags) ? msg.flags.map(String) : [],
+        );
+        break;
+      case "label_help":
+        // "I can't tell": in blind mode, Claude looks now.
+        labeling.help();
+        break;
+      case "label_pick":
+        // The second reviewer's own label for the current image; it goes in
+        // the results, not to Claude now.
+        labeling.pick(String(msg.from ?? "reviewer"), String(msg.label ?? ""));
         break;
       case "peer_comment": {
         // The second reviewer's take on the current hunk. Quoted data, never
@@ -147,6 +170,12 @@ const review = new ReviewSession(
   log,
 );
 
+const labeling = new LabelSession(
+  (msg) => bridge.send(msg),
+  (content, meta) => notifyClaude(content, meta),
+  log,
+);
+
 // Splits a reply into sentence-sized say messages so the avatar starts
 // talking after the first sentence (plan §5).
 export function splitSentences(text: string): string[] {
@@ -209,7 +238,11 @@ const TOOLS = [
               lang: { type: "string" },
               start: { type: "number" },
               end: { type: "number" },
-              diff: { type: "string" },
+              diff: {
+                type: "string",
+                description: "Unified-diff hunk starting at its @@ line (for a new file, " +
+                  "from git diff --no-index /dev/null <file>).",
+              },
               summary: { type: "string", description: "One spoken-style sentence about the hunk." },
             },
             required: ["file", "diff", "summary"],
@@ -217,6 +250,86 @@ const TOOLS = [
         },
       },
       required: ["hunks"],
+    },
+  },
+  {
+    name: "label_begin",
+    description:
+      "Start labeling images with the streamer, one at a time. Blind by default: " +
+      "the streamer labels alone, and only when they ask for help do you get a " +
+      "label_help event to look at that image and answer with label_suggest (the " +
+      "second reviewer looks then too). With blind false, give your suggestions up " +
+      "front instead. Navigation happens without the model; you'll get one event " +
+      "with every final label (\"label:flag:flag\") when the pass completes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        labels: {
+          type: "array",
+          description: "The labels to choose from. Names are spoken, so keep them short words.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              description: { type: "string", description: "What the label means, shown and given to the second reviewer." },
+            },
+            required: ["name"],
+          },
+        },
+        flags: {
+          type: "array",
+          description: "Optional qualifiers the streamer can add to any label (\"unclear, blurry\"). " +
+            "Names are spoken, so keep them short words.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              description: { type: "string", description: "When the flag applies." },
+            },
+            required: ["name"],
+          },
+        },
+        instructions: {
+          type: "string",
+          description: "What to judge in each image, for the page and the second reviewer.",
+        },
+        blind: {
+          type: "boolean",
+          description: "Default true: no picks until the streamer asks. False: send suggestions up front.",
+        },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              image: { type: "string", description: "Image path (png, jpg, gif or webp), relative to the project." },
+              suggestion: { type: "string", description: "Not blind only: your label for it (label or label:flag)." },
+              note: { type: "string", description: "Not blind only: one short spoken-style sentence on why." },
+            },
+            required: ["image"],
+          },
+        },
+      },
+      required: ["labels", "items"],
+    },
+  },
+  {
+    name: "label_suggest",
+    description:
+      "Answer a label_help event: your label for the image the streamer asked about, " +
+      "after looking at it. Spoken and shown next to the second reviewer's pick.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        label: { type: "string", description: "One of the task's label names." },
+        flags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Any of the task's flags that apply; usually none.",
+        },
+        note: { type: "string", description: "One short spoken-style sentence on why." },
+      },
+      required: ["label"],
     },
   },
 ];
@@ -260,6 +373,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             "for you — you'll get one event when the review completes",
         }],
       };
+    }
+    case "label_begin": {
+      const task = {
+        labels: Array.isArray(args.labels) ? args.labels : [],
+        flags: Array.isArray(args.flags) ? args.flags : [],
+        instructions: args.instructions === undefined ? undefined : String(args.instructions),
+        items: Array.isArray(args.items) ? args.items : [],
+        blind: args.blind !== false,
+      } as LabelTask;
+      mode = "label";
+      bridge.send({ type: "state", mode });
+      labeling.begin(task);
+      return {
+        content: [{
+          type: "text",
+          text: `labeling started with ${task.items.length} images; navigation is handled ` +
+            "for you — you'll get one event with the final labels when it completes",
+        }],
+      };
+    }
+    case "label_suggest": {
+      const error = labeling.suggest(
+        String(args.label ?? ""),
+        Array.isArray(args.flags) ? args.flags.map(String) : [],
+        String(args.note ?? ""),
+      );
+      return { content: [{ type: "text", text: error ?? "suggested" }], isError: error !== null };
     }
     default:
       throw new Error(`unknown tool: ${name}`);

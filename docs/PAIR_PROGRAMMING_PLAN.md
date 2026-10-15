@@ -119,6 +119,11 @@ session wins.
 {"type": "state", "mode": "review", "chunk": 2, "chunks": 5}
 {"type": "hunk", "review": 1, "index": 3, "total": 7, "file": "...", "lang": "python", "diff": "...", "summary": "..."}
 {"type": "vocab", "corrections": {"update tracks": "update_tracks"}}
+{"type": "label_item", "task": 1, "index": 2, "total": 40, "file": "...", "image": "data:image/png;base64,..." | null,
+ "labels": [{"name": "Neutral", "description": "..."}], "flags": [{"name": "blurry", "description": "..."}],
+ "instructions": "...", "blind": true, "suggestion": "" | "Mild:blurry", "note": "...", "decided": null}
+{"type": "label_suggestion", "task": 1, "index": 2, "label": "Unclear:blurry", "note": "..."}  // coder's pick after help
+{"type": "label_result", "labeled": 38, "total": 40}
 
 // bridge → channel
 {"type": "utterance", "source": "microphone", "text": "...", "ts": 0}
@@ -127,11 +132,30 @@ session wins.
 {"type": "debate", "status": "agreed", "comment": "..."}                              // new: buffer as a comment
 {"type": "ruling", "winner": "bobby" | "dyson" | "streamer", "text": "..." | null}   // new
 {"type": "barge_in"}
+{"type": "label", "label": "Unclear", "flags": ["blurry"], "by": "potate" | "dyson" | "bobby"}  // the streamer's call
+{"type": "label_help"}                                                    // "I can't tell": coder looks now
+{"type": "label_pick", "from": "bobby", "label": "Unclear:blurry"}        // kept for the results
 
 // bridge → review page (new)
 {"type": "thread", "speaker": "bobby", "text": "...", "stance": "concern"}
 {"type": "debate", "status": "approved" | "agreed" | "deadlock" | "ruled" | "cancelled", ...}
+{"type": "label_pick", "speaker": "bobby" | "dyson", "label": "Unclear:blurry", "text": "...", "index": 2}
+{"type": "label_call", "label": "Unclear:blurry", "by": "potate"}
 ```
+
+**Label mode** (`label_begin`) reuses the review machinery for images. The
+channel sends one image at a time, inline as a data URL since the pages and
+the reviewer are on another machine (the bridge accepts frames up to 16 MiB).
+Blind by default: nobody else looks until the streamer says "I can't tell",
+"I don't know", "not sure" or "what do you think". Then the bridge sends
+`label_help` (the coder looks and answers with `label_suggest`) and asks the
+reviewer, who replies ending in a `LABEL: name:flag` line; both are spoken.
+Without blind, the coder's up-front suggestion is spoken as each image comes
+up and the reviewer looks right away. The streamer says a label with any
+flags after it ("unclear, blurry"), "go with Bobby" / "Dyson's right",
+"skip", "next" / "back", or "that's all"; the coder gets one `label_complete`
+event with every final label as `label:flag:flag`, who made the call, and
+each pick.
 
 The bridge speaks each hunk's `summary` as the coder the first time the hunk
 is shown, then asks the reviewer. `review` on hunk frames lets it tell a

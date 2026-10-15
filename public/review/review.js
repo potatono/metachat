@@ -2,6 +2,10 @@
 // captures that screen).  Connects to the coder bridge as a viewer and renders
 // hunk, state, comment, scroll, reviewer-debate (thread/debate), thinking,
 // activity, and review_result frames (an APPROVED / CHANGES NEEDED stamp).
+// In label mode the diff area shows the image being labeled instead, with the
+// label set below it marked with each pick and the streamer's call.  Blind,
+// no picks show until the streamer asks for help.  Calls and picks are
+// "label:flag:flag"; the flags show on the label they go with.
 // Outside a review, the diff area is a workbench: the coder's latest edit as
 // it lands, beside a feed of its recent steps.
 // Opened by the request console (?from=console), it goes back there once
@@ -30,6 +34,11 @@ class ReviewPage {
         this.lastLabel = null;
         this.fromConsole = new URLSearchParams(window.location.search).get('from') === 'console';
         this.stampUntil = 0;  // hold the trip back to the console until then
+        // Label mode: the image on screen, and each image's picks and final
+        // call by index, so going back shows what was said.
+        this.labelItem = null;
+        this.labelTask = null;
+        this.labelState = new Map();
         this.buildWorkbench();
 
         this.bridge = new BridgeClient({
@@ -53,6 +62,10 @@ class ReviewPage {
             case 'thinking': this.onThinking(msg); break;
             case 'activity': this.onActivity(msg); break;
             case 'review_result': this.onReviewResult(msg); break;
+            case 'label_item': this.onLabelItem(msg); break;
+            case 'label_pick': this.onLabelPick(msg); break;
+            case 'label_call': this.onLabelCall(msg); break;
+            case 'label_result': this.onLabelResult(msg); break;
         }
     }
 
@@ -85,7 +98,11 @@ class ReviewPage {
             this.addStep({ text: msg.label });
         }
         this.lastLabel = msg.label;
-        if (msg.mode !== 'review') {
+        document.body.classList.toggle('label-mode', msg.mode === 'label');
+        if (msg.mode !== 'label') {
+            this.labelItem = null;
+        }
+        if (msg.mode !== 'review' && msg.mode !== 'label') {
             this.commentsByHunk.clear();
             this.threadByHunk.clear();
             this.debateByHunk.clear();
@@ -211,7 +228,22 @@ class ReviewPage {
         if (/^(diff --git|---)/m.test(diff)) {
             return diff;
         }
-        return `--- a/${msg.file}\n+++ b/${msg.file}\n${diff}`;
+        return `--- a/${msg.file}\n+++ b/${msg.file}\n${this.withHunkHeader(diff, msg.start)}`;
+    }
+
+    // diff2html drops every line before the first @@, so a hunk sent as bare
+    // +/- lines (a coder hand-building one for a new file) would render empty.
+    // Give it a header counted from its own lines.
+    withHunkHeader(diff, start) {
+        if (/^@@ /m.test(diff)) {
+            return diff;
+        }
+        const lines = diff.replace(/\n$/, '').split('\n');
+        const oldCount = lines.filter((l) => !l.startsWith('+')).length;
+        const newCount = lines.filter((l) => !l.startsWith('-')).length;
+        const from = start || 1;
+        const oldRange = oldCount ? `${from},${oldCount}` : '0,0';
+        return `@@ -${oldRange} +${from},${newCount} @@\n${diff}`;
     }
 
     // The footer shows whoever spoke last, in their colour.
@@ -350,12 +382,170 @@ class ReviewPage {
         this.el.thinking.classList.toggle('hidden', this.working.size === 0);
     }
 
+    // --- Label mode ---
+
+    labelStateFor(index) {
+        if (!this.labelState.has(index)) this.labelState.set(index, { picks: {}, decided: null });
+        return this.labelState.get(index);
+    }
+
+    onLabelItem(msg) {
+        if (msg.task !== this.labelTask) {
+            this.labelTask = msg.task;
+            this.labelState.clear();
+        }
+        this.labelItem = msg;
+        this.currentHunk = null;
+        this.showingWorkbench = false;
+        const state = this.labelStateFor(msg.index);
+        if (msg.suggestion) state.picks[this.coder] = msg.suggestion;
+        if (msg.decided) state.decided = { label: msg.decided };
+        this.el.file.textContent = msg.file || '';
+        this.el.hunk.textContent = `image ${msg.index}/${msg.total}` + (msg.blind ? ' · blind' : '');
+        if (msg.suggestion && !msg.blind) {
+            this.setCaption(this.coder, `I'd say ${this.spoken(msg.suggestion)}.` +
+                            (msg.note ? ` ${msg.note}` : ''));
+        } else if (msg.blind) {
+            this.setCaption(null, Object.keys(state.picks).length
+                ? '' : 'your call — or "I can\'t tell" for help');
+        }
+        this.el.side.classList.add('hidden');
+        this.renderLabel();
+    }
+
+    onLabelPick(msg) {
+        if (!this.labelItem) return;
+        this.labelStateFor(msg.index).picks[msg.speaker] = msg.label;
+        if (msg.index === this.labelItem.index) {
+            const text = msg.speaker === this.coder
+                ? `I'd say ${this.spoken(msg.label)}.` + (msg.text ? ` ${msg.text}` : '')
+                : (msg.text || this.spoken(msg.label));
+            this.setCaption(msg.speaker, text);
+            this.renderLabel();
+        }
+    }
+
+    // The streamer's call lands on the image on screen; the next one follows
+    // right behind it.
+    onLabelCall(msg) {
+        if (!this.labelItem) return;
+        this.labelStateFor(this.labelItem.index).decided = { label: msg.label, by: msg.by };
+        this.setCaption(msg.by, this.spoken(msg.label));
+        this.renderLabel();
+    }
+
+    // "unclear:blurry" as said: "unclear, blurry".
+    spoken(value) {
+        return (value || '').split(':').join(', ');
+    }
+
+    // A "label:flag" value's label and flags.
+    splitValue(value) {
+        const [label, ...flags] = (value || '').split(':');
+        return { label, flags };
+    }
+
+    renderLabel() {
+        const item = this.labelItem;
+        const state = this.labelStateFor(item.index);
+        const root = document.createElement('div');
+        root.className = 'labeler';
+
+        if (item.instructions) {
+            const instructions = document.createElement('div');
+            instructions.className = 'label-instructions';
+            instructions.textContent = item.instructions;
+            root.append(instructions);
+        }
+
+        const frame = document.createElement('div');
+        frame.className = 'label-image';
+        if (item.image) {
+            const img = document.createElement('img');
+            img.src = item.image;
+            img.alt = item.file || '';
+            frame.append(img);
+        } else {
+            frame.classList.add('missing');
+            frame.textContent = `can't show ${item.file || 'this image'}`;
+        }
+        root.append(frame);
+
+        const options = document.createElement('div');
+        options.className = 'label-options';
+        const decided = state.decided ? this.splitValue(state.decided.label) : null;
+        for (const option of item.labels || []) {
+            const chip = document.createElement('div');
+            chip.className = 'label-option';
+            if (decided && decided.label === option.name) {
+                chip.classList.add('decided');
+                if (decided.flags.length) {
+                    const flags = document.createElement('div');
+                    flags.className = 'label-flags';
+                    flags.textContent = decided.flags.join(' · ');
+                    chip.append(flags);
+                }
+            }
+            const name = document.createElement('div');
+            name.className = 'label-name';
+            name.textContent = option.name;
+            chip.append(name);
+            if (option.description) {
+                const desc = document.createElement('div');
+                desc.className = 'label-desc';
+                desc.textContent = option.description;
+                chip.append(desc);
+            }
+            const who = document.createElement('div');
+            who.className = 'label-who';
+            for (const [speaker, value] of Object.entries(state.picks)) {
+                const pick = this.splitValue(value);
+                if (pick.label !== option.name) continue;
+                const tag = document.createElement('span');
+                tag.className = 'label-tag ' + this.speakerClass(speaker);
+                tag.textContent = [speaker.toUpperCase(), ...pick.flags].join(' · ');
+                who.append(tag);
+            }
+            chip.append(who);
+            options.append(chip);
+        }
+        root.append(options);
+
+        // The flags the streamer can add after a label, as a reminder.
+        if ((item.flags || []).length) {
+            const flags = document.createElement('div');
+            flags.className = 'label-flag-list';
+            for (const flag of item.flags) {
+                const chip = document.createElement('span');
+                chip.className = 'label-flag';
+                chip.textContent = flag.name;
+                if (flag.description) chip.title = flag.description;
+                if (decided && decided.flags.includes(flag.name)) chip.classList.add('on');
+                flags.append(chip);
+            }
+            root.append(flags);
+        }
+
+        this.el.diff.classList.remove('empty');
+        this.el.diff.replaceChildren(root);
+    }
+
+    onLabelResult(msg) {
+        this.showStamp(msg.labeled === msg.total ? 'approved' : 'changes',
+                       `LABELED ${msg.labeled}/${msg.total}`);
+    }
+
     // A big rubber stamp over the code with the review's verdict.
     onReviewResult(msg) {
+        this.showStamp(msg.approved ? 'approved' : 'changes',
+                       msg.approved ? 'APPROVED' : 'CHANGES NEEDED');
+    }
+
+    showStamp(kind, text) {
         const STAMP_MS = 3000;
         const stamp = document.createElement('div');
-        stamp.className = 'stamp ' + (msg.approved ? 'approved' : 'changes');
-        stamp.textContent = msg.approved ? 'APPROVED' : 'CHANGES NEEDED';
+        stamp.className = 'stamp ' + kind;
+        stamp.textContent = text;
         // The diff scrolls; land the stamp in the visible part of it.
         const container = document.getElementById('diff-container');
         stamp.style.top = `${container.scrollTop + container.clientHeight * 0.4}px`;

@@ -69,7 +69,7 @@ class ConsolePage {
 
     onState(msg) {
         this.mode = msg.mode || 'idle';
-        if (msg.mode === 'review') {
+        if (msg.mode === 'review' || msg.mode === 'label') {
             this.goToReviewPage();
             return;
         }

@@ -218,6 +218,7 @@ class ChatbotManager():
             "plan": f"Reply with a short quip about {coder} being roped into pair programming",
             "implement": f"Reply with a short quip about {coder} starting to write code",
             "review": f"Reply with a short quip about {coder}'s code getting reviewed on stream",
+            "label": f"Reply with a short quip about {coder} helping label images on stream",
             "idle": f"Reply with a short quip about {coder} being done coding for now",
         }
         prompt = prompts.get(mode)
