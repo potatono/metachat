@@ -5,7 +5,9 @@
 // In label mode the diff area shows the image being labeled instead, with the
 // label set below it marked with each pick and the streamer's call.  Blind,
 // no picks show until the streamer asks for help.  Calls and picks are
-// "label:flag:flag"; the flags show on the label they go with.
+// "label:flag:flag"; the flags show on the label they go with.  The label
+// cards and flags are buttons too: pick a label, toggle flags, then "Label it"
+// sends the call to the bridge, same as saying it.
 // Outside a review, the diff area is a workbench: the coder's latest edit as
 // it lands, beside a feed of its recent steps.
 // Opened by the request console (?from=console), it goes back there once
@@ -21,7 +23,9 @@ class ReviewPage {
             this.el[id] = document.getElementById(id);
         }
 
-        // Comments and debate turns keyed by hunk index so back/next keeps them.
+        // Comments and debate turns keyed by hunk index so back/next keeps them,
+        // for the review pass with this id.
+        this.reviewId = null;
         this.commentsByHunk = new Map();
         this.threadByHunk = new Map();
         this.debateByHunk = new Map();
@@ -112,6 +116,14 @@ class ReviewPage {
     }
 
     onHunk(msg) {
+        // A new review pass starts its threads over, even without a mode
+        // change in between to clear them.
+        if (msg.review !== undefined && msg.review !== this.reviewId) {
+            this.reviewId = msg.review;
+            this.commentsByHunk.clear();
+            this.threadByHunk.clear();
+            this.debateByHunk.clear();
+        }
         this.currentHunk = msg.index;
         this.el.file.textContent = msg.file || '';
         this.el.hunk.textContent =
@@ -385,8 +397,31 @@ class ReviewPage {
     // --- Label mode ---
 
     labelStateFor(index) {
-        if (!this.labelState.has(index)) this.labelState.set(index, { picks: {}, decided: null });
+        if (!this.labelState.has(index)) {
+            this.labelState.set(index, { picks: {}, decided: null, chosen: null, flags: new Set() });
+        }
         return this.labelState.get(index);
+    }
+
+    // Clicking a label selects it (again clears it); a flag toggles.
+    chooseLabel(name) {
+        const state = this.labelStateFor(this.labelItem.index);
+        state.chosen = state.chosen === name ? null : name;
+        this.renderLabel();
+    }
+
+    toggleFlag(name) {
+        const state = this.labelStateFor(this.labelItem.index);
+        if (!state.flags.delete(name)) state.flags.add(name);
+        this.renderLabel();
+    }
+
+    submitLabel() {
+        const item = this.labelItem;
+        const state = this.labelStateFor(item.index);
+        if (!state.chosen) return;
+        this.bridge.send({ type: 'label_click', index: item.index, label: state.chosen,
+                           flags: [...state.flags] });
     }
 
     onLabelItem(msg) {
@@ -475,8 +510,11 @@ class ReviewPage {
         options.className = 'label-options';
         const decided = state.decided ? this.splitValue(state.decided.label) : null;
         for (const option of item.labels || []) {
-            const chip = document.createElement('div');
+            const chip = document.createElement('button');
+            chip.type = 'button';
             chip.className = 'label-option';
+            if (state.chosen === option.name) chip.classList.add('chosen');
+            chip.addEventListener('click', () => this.chooseLabel(option.name));
             if (decided && decided.label === option.name) {
                 chip.classList.add('decided');
                 if (decided.flags.length) {
@@ -516,15 +554,31 @@ class ReviewPage {
             const flags = document.createElement('div');
             flags.className = 'label-flag-list';
             for (const flag of item.flags) {
-                const chip = document.createElement('span');
+                const chip = document.createElement('button');
+                chip.type = 'button';
                 chip.className = 'label-flag';
                 chip.textContent = flag.name;
                 if (flag.description) chip.title = flag.description;
                 if (decided && decided.flags.includes(flag.name)) chip.classList.add('on');
+                if (state.flags.has(flag.name)) chip.classList.add('chosen');
+                chip.addEventListener('click', () => this.toggleFlag(flag.name));
                 flags.append(chip);
             }
             root.append(flags);
         }
+
+        const submit = document.createElement('button');
+        submit.type = 'button';
+        submit.className = 'label-submit';
+        submit.disabled = !state.chosen;
+        submit.textContent = state.chosen
+            ? `Label it: ${[state.chosen, ...state.flags].join(', ')}`
+            : 'Label it';
+        submit.addEventListener('click', () => this.submitLabel());
+        const actions = document.createElement('div');
+        actions.className = 'label-actions';
+        actions.append(submit);
+        root.append(actions);
 
         this.el.diff.classList.remove('empty');
         this.el.diff.replaceChildren(root);

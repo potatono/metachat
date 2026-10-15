@@ -62,8 +62,9 @@ never anchor theirs.
    explicit `Unclear` label (description: too unclear to label). It isn't
    built in; leave it out when every image should get a real answer.
 2. **Flags.** Optional qualifiers that can ride along on any label, for why
-   or how: `blurry`, `occluded`, `side`. The streamer says them after the
-   label ("unclear, blurry"; "neutral, occluded and side"). Keep them short
+   or how: `blurry`, `occluded`, `side`. The streamer says them with the
+   label in any order ("unclear, blurry"; "I'd say occluded, neutral"), or
+   clicks them on the review page. Keep them short
    single words, distinct from the label names, with a description each.
    Use flags for things you will want to filter or count later (e.g. drop
    blurry crops, or see why images were unclear); don't make a flag that

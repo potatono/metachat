@@ -48,9 +48,16 @@ LABEL_SKIP = r"(?:skip(?: (?:it|this|that|this one|that one))?|pass|no label)"
 # Asking the coder and reviewer to look (blind mode keeps them out until then).
 LABEL_HELP = (r"(?:i (?:can't|cannot|can not) tell|i (?:don't|do not) know|(?:i'm )?not sure"
               r"|what do (?:you|you guys|you two|y'all) think)")
-LABEL_GO_WITH = (r"(?:(?:i'll |let's |i'd )?(?:go|going) with|agree with|same as|i'm with)"
+LABEL_GO_WITH = (r"(?:(?:(?:i'm |i am )?(?:gonna |going to )|i'll |let's |i'd )?(?:go|going) with"
+                 r"|agree with|same as|i'm with)"
                  r" (\w+)(?:'s(?: (?:pick|label|call|answer))?)?"
                  r"|(\w+)(?:'s| is) (?:right|correct)")
+# What a call may start with: "I'm gonna go with unclear", "label it neutral",
+# "let's do mild", "I'd say expressive".
+LABEL_LEAD = re.compile(
+    r"^(?:(?:(?:i'm|i am) (?:gonna|going to) |i'll |let's |we'll )?"
+    r"(?:go with|label (?:it|this|that)(?: as)?|make it|call it)"
+    r"|let's do|i'd say|i would say)\s+")
 # Ending a labeling pass early.  Review's "looks good" is too easy to say
 # about a pick to mean "stop here".
 LABEL_DONE = (r"(?:(?:i'm |we're )?done(?: labell?ing)?|(?:that's|that is) (?:it|all)"
@@ -90,8 +97,11 @@ def option_names(options):
 
 
 def parse_call(cleaned, labels, flags):
-    """A spoken call ("unclear, blurry", "neutral") as (label, [flags]) in the
-    task's spelling, or None unless every word is the label or a flag."""
+    """A spoken call ("unclear, blurry", "blurry, unclear", "I'm gonna go
+    with neutral") as (label, [flags]) in the task's spelling.  None unless,
+    after an optional lead-in, there's exactly one label and every other word
+    is a flag, in any order."""
+    cleaned = LABEL_LEAD.sub("", cleaned)
     words = [w for w in re.split(r"[,\s]+", cleaned) if w and w not in ("and", "with", "plus")]
     label_names, flag_names = option_names(labels), option_names(flags)
 
@@ -102,18 +112,23 @@ def parse_call(cleaned, labels, flags):
                 return name, end
         return None, at
 
-    label, at = longest(label_names, 0)
-    if not label:
-        return None
-    found = []
+    found_labels, found_flags = [], []
+    at = 0
     while at < len(words):
-        flag, at_next = longest(flag_names, at)
-        if not flag:
+        label, end = longest(label_names, at)
+        flag, flag_end = longest(flag_names, at)
+        if label and end >= flag_end:
+            found_labels.append(label)
+            at = end
+        elif flag:
+            if flag not in found_flags:
+                found_flags.append(flag)
+            at = flag_end
+        else:
             return None
-        if flag not in found:
-            found.append(flag)
-        at = at_next
-    return label, found
+    if len(set(found_labels)) != 1:
+        return None
+    return found_labels[0], found_flags
 
 
 def parse_label(text, labels, flags=()):
@@ -401,6 +416,8 @@ class CoderBridgeApp():
                     continue
                 if isinstance(msg, dict) and msg.get("type") == "request":
                     self.handle_request(ws, str(msg.get("text", "")))
+                elif isinstance(msg, dict) and msg.get("type") == "label_click":
+                    self.handle_label_click(msg)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
@@ -771,15 +788,32 @@ class CoderBridgeApp():
             self.send_to_channel({"type": "nav", "action": "next" if call == "skip" else "approve"})
             return
         if call:
-            label, flags, by = call
-            value = ":".join([label, *flags])
-            self.log.info(f"label: {value} (by {by})")
-            self.broadcast_to_viewers({"type": "label_call", "label": value, "by": by})
-            self.send_to_channel({"type": "label", "label": label, "flags": flags, "by": by})
+            self.send_label_call(*call)
             return
         # Anything else is talk: it goes to the coder only when it's named.
         if self.manager.code_character.is_activated(message):
             self.send_utterance(text, source)
+
+    def send_label_call(self, label, flags, by):
+        value = ":".join([label, *flags])
+        self.log.info(f"label: {value} (by {by})")
+        self.broadcast_to_viewers({"type": "label_call", "label": value, "by": by})
+        self.send_to_channel({"type": "label", "label": label, "flags": flags, "by": by})
+
+    def handle_label_click(self, msg):
+        """A call made on the review page's label buttons: the streamer's,
+        same as a spoken one, for the image on screen only."""
+        item = self.current_label_item
+        if self.mode != "label" or not item or msg.get("index") != item.get("index"):
+            return
+        labels = option_names(item.get("labels", []))
+        flags = option_names(item.get("flags", []))
+        label = labels.get(str(msg.get("label", "")).lower())
+        picked = [flags.get(str(f).lower()) for f in msg.get("flags") or []]
+        if not label or None in picked:
+            self.log.warning(f"label click not in the task: {msg}")
+            return
+        self.send_label_call(label, list(dict.fromkeys(picked)), self.manager.streamer_name)
 
     def handle_turn(self, msg):
         """Dyson's debate reply (spoken separately via say frames)."""

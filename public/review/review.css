@@ -375,7 +375,13 @@ footer {
     background: var(--panel);
     border: 2px solid var(--border);
     border-radius: 0.4em;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
+.label-option:hover { border-color: var(--dim); }
+.label-option.chosen { border-color: var(--text); border-style: dashed; }
 .label-option.decided {
     border-color: var(--streamer);
     background: #1f3321;
@@ -427,11 +433,35 @@ footer {
     border: 1px solid var(--border);
     border-radius: 1em;
     color: var(--dim);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
 }
+.label-flag:hover { border-color: var(--dim); }
+.label-flag.chosen { border-color: var(--text); border-style: dashed; color: var(--text); }
 .label-flag.on {
     border-color: var(--streamer);
     color: var(--text);
     background: #1f3321;
+}
+.label-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+.label-submit {
+    padding: 0.4em 1.2em;
+    border: none;
+    border-radius: 0.4em;
+    background: var(--streamer);
+    color: #101010;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.label-submit:disabled {
+    background: var(--border);
+    color: var(--dim);
+    cursor: default;
 }
 #diff:has(.labeler) { height: 100%; }
 /* No debate thread while labeling: the image gets the full width. */

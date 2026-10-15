@@ -141,6 +141,9 @@ session wins.
 {"type": "debate", "status": "approved" | "agreed" | "deadlock" | "ruled" | "cancelled", ...}
 {"type": "label_pick", "speaker": "bobby" | "dyson", "label": "Unclear:blurry", "text": "...", "index": 2}
 {"type": "label_call", "label": "Unclear:blurry", "by": "potate"}
+
+// review page → bridge
+{"type": "label_click", "index": 2, "label": "Unclear", "flags": ["blurry"]}  // "Label it" button
 ```
 
 **Label mode** (`label_begin`) reuses the review machinery for images. The
@@ -151,11 +154,13 @@ Blind by default: nobody else looks until the streamer says "I can't tell",
 `label_help` (the coder looks and answers with `label_suggest`) and asks the
 reviewer, who replies ending in a `LABEL: name:flag` line; both are spoken.
 Without blind, the coder's up-front suggestion is spoken as each image comes
-up and the reviewer looks right away. The streamer says a label with any
-flags after it ("unclear, blurry"), "go with Bobby" / "Dyson's right",
-"skip", "next" / "back", or "that's all"; the coder gets one `label_complete`
-event with every final label as `label:flag:flag`, who made the call, and
-each pick.
+up and the reviewer looks right away. The streamer says exactly one label
+with any flags, in any order and after an optional lead-in ("I'm gonna go
+with", "label it", "make it", "call it", "let's do", "I'd say"), or picks
+them on the review page and presses "Label it"; or says "go with Bobby" /
+"Dyson's right", "skip", "next" / "back", or "that's all". The coder gets one
+`label_complete` event with every final label as `label:flag:flag`, who made
+the call, and each pick.
 
 The bridge speaks each hunk's `summary` as the coder the first time the hunk
 is shown, then asks the reviewer. `review` on hunk frames lets it tell a

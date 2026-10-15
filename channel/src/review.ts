@@ -95,7 +95,9 @@ export class ReviewSession {
         this.wholeFile();
         break;
       case "approve":
-        this.complete();
+        // "Looks good" approves the hunk on screen, not the whole review:
+        // it moves on like "next", and only ends the review on the last one.
+        this.nav("next");
         break;
       default:
         this.log(`unknown nav action: ${action}`);

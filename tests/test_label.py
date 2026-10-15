@@ -225,3 +225,61 @@ def test_bobbys_pick_can_carry_flags():
     assert channel.of("label_pick") == [{"type": "label_pick", "from": "bobby",
                                          "label": "Unclear:blurry"}]
     assert channel.of("label")[-1]["flags"] == ["blurry"]
+
+
+def test_a_call_can_start_with_a_lead_in():
+    bridge, _, _, _ = make_bridge()
+    bridge.handle_channel_message(BLIND)
+    for line in ("I'm gonna go with unclear.", "I'm going to label it unclear",
+                 "Let's do unclear.", "Make it unclear", "Call it unclear.",
+                 "I'd say unclear", "okay, I'll go with unclear"):
+        assert bridge.match_label(line) == ("Unclear", [], "potate"), line
+
+
+def test_flags_can_come_before_the_label():
+    bridge, _, _, _ = make_bridge()
+    bridge.handle_channel_message(BLIND)
+
+    assert bridge.match_label("Blurry, unclear.") == ("Unclear", ["blurry"], "potate")
+    assert bridge.match_label("I'd say occluded, neutral, blurry") == (
+        "Neutral", ["occluded", "blurry"], "potate")
+
+
+def test_a_call_needs_exactly_one_label():
+    bridge, _, _, _ = make_bridge()
+    bridge.handle_channel_message(BLIND)
+
+    assert bridge.match_label("neutral or mild") is None
+    assert bridge.match_label("neutral, mild") is None
+    assert bridge.match_label("blurry") is None
+    assert bridge.match_label("I think it's unclear") is None
+
+
+def test_going_with_a_reviewer_still_takes_their_pick():
+    bridge, _, _, _ = make_bridge(["blank.\nLABEL: Neutral"])
+    bridge.handle_channel_message(BLIND)
+    say(bridge, "I can't tell.")
+
+    assert bridge.match_label("I'm gonna go with Bobby.") == ("Neutral", [], "bobby")
+
+
+def test_a_click_on_the_page_is_the_streamers_call():
+    bridge, _, channel, viewer = make_bridge()
+    bridge.handle_channel_message(BLIND)
+    bridge.handle_label_click({"type": "label_click", "index": 1, "label": "unclear",
+                               "flags": ["Blurry", "blurry"]})
+
+    assert channel.of("label") == [{"type": "label", "label": "Unclear",
+                                    "flags": ["blurry"], "by": "potate"}]
+    assert viewer.of("label_call")[-1]["label"] == "Unclear:blurry"
+
+
+def test_a_click_for_another_image_or_an_unknown_label_is_ignored():
+    bridge, _, channel, _ = make_bridge()
+    bridge.handle_channel_message(BLIND)
+    bridge.handle_label_click({"type": "label_click", "index": 2, "label": "Unclear"})
+    bridge.handle_label_click({"type": "label_click", "index": 1, "label": "Angry"})
+    bridge.handle_label_click({"type": "label_click", "index": 1, "label": "Unclear",
+                               "flags": ["sideways"]})
+
+    assert channel.of("label") == []
